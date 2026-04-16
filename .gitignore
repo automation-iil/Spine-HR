@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+scraper_ui.py
+read_essl_data.py
+scrape.bat
+start_dashboard.bat
