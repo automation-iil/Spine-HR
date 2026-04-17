@@ -104,6 +104,7 @@ MEDAL = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8�
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 def load_data() -> dict:
+    """Load the full multi-month store from JSON."""
     path = Path(config.DATA_FILE)
     if not path.exists():
         return {}
@@ -111,6 +112,21 @@ def load_data() -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def load_month(year: int, month: int) -> dict:
+    """Return the data dict for a specific year-month, or {} if not scraped yet."""
+    store = load_data()
+    if not store:
+        return {}
+    key = f"{year}-{month:02d}"
+    # Multi-month format
+    if "months" in store:
+        return store["months"].get(key, {})
+    # Legacy single-month format
+    if store.get("year") == year and store.get("month") == month:
+        return store
+    return {}
 
 
 def normalize_status(raw: str) -> str:
@@ -675,21 +691,37 @@ def main():
             f"File: `{config.DATA_FILE}`"
         )
 
-    # ── Load data ─────────────────────────────────────────────────────────────
-    raw = load_data()
-    if not raw:
+    # ── Load data for selected month ──────────────────────────────────────────
+    store = load_data()
+    if not store:
         st.warning("No data found. Run **scrape.bat** or click Refresh.")
         st.stop()
+
+    raw = load_month(int(sel_year), int(sel_month))
+
+    # Show which months are available
+    if "months" in store:
+        available = sorted(store["months"].keys())
+        st.caption(f"📁 Available months: **{', '.join(available)}**")
+
+    if not raw:
+        st.warning(
+            f"No data for **{calendar.month_name[int(sel_month)]} {int(sel_year)}**. "
+            f"Please scrape this month first."
+        )
+        st.stop()
+
     if "error" in raw and not raw.get("records"):
         st.error(f"Last fetch failed: {raw['error']}")
         st.stop()
+
     records = raw.get("records", [])
     if not records:
-        st.warning("Data file is empty. Run `python read_essl_data.py`.")
+        st.warning("No records found for this month.")
         st.stop()
 
-    data_month = int(raw.get("month", today.month))
-    data_year  = int(raw.get("year",  today.year))
+    data_month = int(raw.get("month", sel_month))
+    data_year  = int(raw.get("year",  sel_year))
     fetched_at = raw.get("fetched_at", "")[:19].replace("T", " ")
 
     st.caption(
