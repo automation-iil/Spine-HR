@@ -220,9 +220,16 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     )
     grp = grp.merge(ot, on=["Emp Code", "Emp Name"], how="left")
 
-    # Total scheduled days in data
+    # Total calendar days in data
     total_days = df["Date"].nunique() if "Date" in df.columns else 1
-    grp["Attendance_Pct"] = (grp["Present"] * 100 / total_days).round(1)
+
+    # Working days = total days - week offs (this is what attendance % should be based on)
+    wo_days  = grp["Week Off"] if "Week Off" in grp.columns else 0
+    wop_days = grp["Week Off (Worked)"] if "Week Off (Worked)" in grp.columns else 0
+    grp["Total_Days"]        = total_days
+    grp["Working_Days_Net"]  = (total_days - wo_days).clip(lower=1)  # exclude pure week offs
+    grp["Attendance_Pct"]    = (grp["Present"] * 100 / grp["Working_Days_Net"]).round(1).clip(upper=100)
+    grp["WO_Pct"]            = (wo_days * 100 / total_days).round(1)
     return grp
 
 
@@ -473,8 +480,7 @@ def render_employee_metrics(summary: pd.DataFrame, df: pd.DataFrame, emp_name: s
         return
     r = row.iloc[0]
 
-    total_days = df["Date"].nunique() if "Date" in df.columns else 1
-
+    total_days   = int(r.get("Total_Days", df["Date"].nunique() if "Date" in df.columns else 1))
     present      = int(r.get("Present", 0))
     absent       = int(r.get("Absent", 0))
     wo           = int(r.get("Week Off", 0))
@@ -485,34 +491,57 @@ def render_employee_metrics(summary: pd.DataFrame, df: pd.DataFrame, emp_name: s
     late_min     = int(r.get("Total_Late", 0))
     late_days    = int(r.get("Late_Days", 0))
     avg_dur      = int(r.get("Avg_Duration", 0))
-    att_pct      = float(r.get("Attendance_Pct", 0))
 
-    ot_str   = f"{ot_min//60}h {ot_min%60}m" if ot_min else "0h 0m"
-    dur_str  = f"{avg_dur//60}h {avg_dur%60}m" if avg_dur else "--"
+    # Working days = total - week offs (correct base for attendance %)
+    working_days = max(total_days - wo, 1)
+    att_pct      = round(min(present * 100 / working_days, 100), 1)
+    wo_pct       = round(wo * 100 / total_days, 1) if total_days else 0
+    absent_pct   = round(absent * 100 / working_days, 1) if working_days else 0
 
-    # ── Metric cards ──────────────────────────────────────────────────────────
+    ot_str  = f"{ot_min//60}h {ot_min%60}m" if ot_min else "0h 0m"
+    dur_str = f"{avg_dur//60}h {avg_dur%60}m" if avg_dur else "--"
+
+    # ── Row 1: Attendance metrics ─────────────────────────────────────────────
+    st.caption(f"📅 Total days: **{total_days}**  |  Week Offs: **{wo}**  |  "
+               f"Working Days (excl. WO): **{working_days}**")
+
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    _metric_card(c1, "Attendance",   f"{att_pct}%",
-                 f"{present}/{total_days} days",
+    _metric_card(c1, "Attendance %",
+                 f"{att_pct}%",
+                 f"{present}/{working_days} working days",
                  "green" if att_pct >= 90 else "orange" if att_pct >= 75 else "red")
-    _metric_card(c2, "Present",      str(present),  f"out of {total_days} days", "green")
-    _metric_card(c3, "Absent",       str(absent),
-                 "🎯 Zero!" if absent == 0 else f"{round(absent*100/total_days,1)}% of days",
+    _metric_card(c2, "Present Days",
+                 str(present),
+                 f"out of {working_days} working days", "green")
+    _metric_card(c3, "Absent Days",
+                 str(absent),
+                 "🎯 Zero!" if absent == 0 else f"{absent_pct}% of working days",
                  "blue" if absent == 0 else "red")
-    _metric_card(c4, "Overtime",     ot_str,
-                 "No OT" if ot_min == 0 else f"{ot_min} minutes total", "orange")
-    _metric_card(c5, "Late Arrivals", str(late_days),
-                 "Perfect" if late_min == 0 else f"{late_min} min total",
-                 "teal" if late_min == 0 else "orange")
-    _metric_card(c6, "Avg Work Time", dur_str,
-                 "per present day", "purple")
+    _metric_card(c4, "Week Off %",
+                 f"{wo_pct}%",
+                 f"{wo} days out of {total_days}", "blue")
+    _metric_card(c5, "Worked on WO",
+                 str(wop),
+                 "extra dedication 💪" if wop > 0 else "none", "teal")
+    _metric_card(c6, "Leave Days",
+                 str(leave),
+                 "days on leave", "orange")
 
-    # ── Secondary row ─────────────────────────────────────────────────────────
-    c7, c8, c9, _ = st.columns(4)
-    _metric_card(c7, "Week Offs",        str(wo),  "", "blue")
-    _metric_card(c8, "Worked on WO",     str(wop),
-                 "extra dedication" if wop > 0 else "", "teal")
-    _metric_card(c9, "Leave Days",       str(leave), "", "orange")
+    # ── Row 2: Performance metrics ────────────────────────────────────────────
+    c7, c8, c9, c10 = st.columns(4)
+    _metric_card(c7, "Overtime",
+                 ot_str,
+                 "No OT" if ot_min == 0 else f"{ot_min} min total", "orange")
+    _metric_card(c8, "Late Arrivals",
+                 str(late_days),
+                 "Perfect ✅" if late_min == 0 else f"{late_min} min total",
+                 "teal" if late_min == 0 else "orange")
+    _metric_card(c9, "Avg Work Time",
+                 dur_str,
+                 "per present day", "purple")
+    _metric_card(c10, "Half Days",
+                 str(int(r.get("Half Day", 0))),
+                 "half day entries", "blue")
 
     st.write("")
 
