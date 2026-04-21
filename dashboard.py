@@ -547,12 +547,14 @@ def render_employee_metrics(summary: pd.DataFrame, df: pd.DataFrame, emp_name: s
 
 
 # ── Attendance Calendar (HTML grid) ──────────────────────────────────────────
-def render_heatmap(df: pd.DataFrame, emp_name: str, year: int, month: int):
+def render_heatmap(df: pd.DataFrame, emp_name: str, year: int, month: int,
+                   missing_days: list = None):
     emp_df = df[df["Emp Name"] == emp_name].copy() if "Emp Name" in df.columns else pd.DataFrame()
     if emp_df.empty or "Day" not in emp_df.columns or "Status_Label" not in emp_df.columns:
         return
 
     day_status = dict(zip(emp_df["Day"].astype(int), emp_df["Status_Label"]))
+    missing_set = set(missing_days or [])
     _, days_in = calendar.monthrange(year, month)
     first_wd   = calendar.monthrange(year, month)[0]   # 0=Mon … 6=Sun
 
@@ -610,10 +612,13 @@ def render_heatmap(df: pd.DataFrame, emp_name: str, year: int, month: int):
 
     # Day cells
     for d in range(1, days_in + 1):
-        st_label = day_status.get(d, "")
-        bg       = CELL_BG.get(st_label, "#e9ecef")
-        tc       = CELL_TXT.get(st_label, "#ffffff") if st_label else "#999999"
-        abbr     = short.get(st_label, st_label[:2] if st_label else "")
+        if d in missing_set:
+            bg, tc, abbr = "#ff9800", "#ffffff", "?"
+        else:
+            st_label = day_status.get(d, "")
+            bg       = CELL_BG.get(st_label, "#e9ecef")
+            tc       = CELL_TXT.get(st_label, "#ffffff") if st_label else "#999999"
+            abbr     = short.get(st_label, st_label[:2] if st_label else "")
         html += (
             f'<div style="{cell_base}background:{bg};">'
             f'<span style="font-weight:700;font-size:14px;color:{tc};">{d}</span>'
@@ -632,6 +637,10 @@ def render_heatmap(df: pd.DataFrame, emp_name: str, year: int, month: int):
             html += (f'<span style="background:{bg};color:{tc};'
                      f'padding:3px 10px;border-radius:12px;font-size:11px;'
                      f'font-weight:600;">{label}</span>')
+    if missing_set:
+        html += (f'<span style="background:#ff9800;color:#ffffff;'
+                 f'padding:3px 10px;border-radius:12px;font-size:11px;'
+                 f'font-weight:600;">⚠️ No Data</span>')
     html += '</div>'
 
     st.markdown(html, unsafe_allow_html=True)
@@ -899,6 +908,38 @@ def main():
 
     df      = prepare_df(records)
 
+    # ── Detect missing dates ──────────────────────────────────────────────────
+    def get_missing_dates(df, year, month):
+        """Return list of dates in the month that have zero records."""
+        today_d = date.today()
+        _, days_in_month = calendar.monthrange(year, month)
+        # Only check up to today if current month
+        last_day = today_d.day if (year == today_d.year and month == today_d.month) \
+                   else days_in_month
+        expected = set(range(1, last_day + 1))
+        if "Day" not in df.columns or df.empty:
+            return sorted(expected)
+        present_days = set(df["Day"].dropna().astype(int).unique())
+        missing = expected - present_days
+        return sorted(missing)
+
+    all_df_full = prepare_df(records)   # unfiltered — check missing on full data
+    missing_days = get_missing_dates(all_df_full, data_year, data_month)
+
+    if missing_days:
+        # Format as readable date strings e.g. "17 Apr, 18 Apr"
+        missing_strs = [
+            f"{d} {calendar.month_abbr[data_month]}"
+            for d in missing_days
+        ]
+        st.warning(
+            f"⚠️ **Missing Data Alert** — No attendance records found for "
+            f"**{len(missing_days)} date(s)** in "
+            f"{calendar.month_name[data_month]} {data_year}: "
+            f"**{', '.join(missing_strs)}**  \n"
+            f"These dates may be holidays, machine offline days, or not yet scraped."
+        )
+
     # Apply department filter
     if sel_dept != "All Departments" and "Department" in df.columns:
         df = df[df["Department"] == sel_dept].copy()
@@ -952,7 +993,7 @@ def main():
             # Calendar + pie side by side
             left, right = st.columns([3, 2])
             with left:
-                render_heatmap(df, sel_emp, data_year, data_month)
+                render_heatmap(df, sel_emp, data_year, data_month, missing_days)
             with right:
                 row = summary[summary["Emp Name"] == sel_emp]
                 if not row.empty:
