@@ -1125,11 +1125,26 @@ def main():
     fetched_at = raw.get("fetched_at", "")[:19].replace("T", " ")
 
     # ── Header banner ─────────────────────────────────────────────────────────
+    import base64
+    logo_path = Path(__file__).parent / "logo.png"
+    logo_html = ""
+    if logo_path.exists():
+        logo_b64 = base64.b64encode(logo_path.read_bytes()).decode()
+        logo_html = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            f'style="width:72px;height:72px;border-radius:50%;'
+            f'background:white;padding:4px;margin-right:18px;'
+            f'box-shadow:0 2px 10px rgba(0,0,0,0.25);" />'
+        )
+
     st.markdown(
         f'<div class="dash-header">'
+        f'<div style="display:flex;align-items:center;">'
+        f'{logo_html}'
         f'<div>'
-        f'<p class="dash-title">📋 Attendance Dashboard</p>'
-        f'<p class="dash-sub">Indian Inovatix · eSSL Biometric · {len(records)} records · Last fetched: {fetched_at}</p>'
+        f'<p class="dash-title">Indian Inovatix Limited</p>'
+        f'<p class="dash-sub">📋 Attendance Dashboard · eSSL Biometric · {len(records)} records · Last fetched: {fetched_at}</p>'
+        f'</div>'
         f'</div>'
         f'<div class="dash-badge">📅 {calendar.month_name[data_month]} {data_year}</div>'
         f'</div>',
