@@ -555,10 +555,10 @@ def render_charts_tab(df: pd.DataFrame, summary: pd.DataFrame):
             **_LAYOUT_BASE, barmode="group", height=300,
             xaxis=dict(tickfont=_DARK),
             yaxis=dict(tickfont=_DARK, title="Count"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                        font=dict(color="#333333")),
             margin=dict(t=40, b=40),
         )
+        fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                      font=dict(color="#333333")))
         st.plotly_chart(fig, use_container_width=True)
 
 
