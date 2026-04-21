@@ -58,16 +58,6 @@ st.markdown("""
         backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);
     }
 
-    /* ── KPI metric cards ── */
-    [data-testid="stMetric"] {
-        background: #ffffff; border-radius: 14px;
-        padding: 16px 20px !important;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-        border-left: 4px solid #0f3460;
-    }
-    [data-testid="stMetricLabel"] { font-size: 12px !important; color: #718096 !important; font-weight:600 !important; }
-    [data-testid="stMetricValue"] { font-size: 28px !important; color: #1a1a2e !important; font-weight:800 !important; }
-
     /* ── Tabs ── */
     div[data-testid="stTabs"] button {
         font-size: 14px; font-weight: 600;
@@ -307,21 +297,39 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── Overall KPI row ───────────────────────────────────────────────────────────
+def _kpi_card(col, icon, label, value, color="#0f3460", bg="#f0f4ff"):
+    """Render a compact KPI card with auto-sizing value text."""
+    val_str = str(value)
+    # Shrink font for longer values
+    font_size = "22px" if len(val_str) <= 5 else "18px" if len(val_str) <= 8 else "15px"
+    col.markdown(
+        f'<div style="background:{bg};border-radius:14px;padding:16px 14px;'
+        f'text-align:center;border-top:4px solid {color};'
+        f'box-shadow:0 2px 10px rgba(0,0,0,0.07);height:90px;'
+        f'display:flex;flex-direction:column;align-items:center;justify-content:center;">'
+        f'<div style="font-size:20px;margin-bottom:4px;">{icon}</div>'
+        f'<div style="font-size:{font_size};font-weight:800;color:#1a1a2e;line-height:1.2;">{val_str}</div>'
+        f'<div style="font-size:11px;font-weight:600;color:#718096;text-transform:uppercase;'
+        f'letter-spacing:0.4px;margin-top:3px;">{label}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
 def render_kpis(df: pd.DataFrame, summary: pd.DataFrame):
-    total_emp    = df["Emp Name"].nunique() if "Emp Name" in df.columns else 0
-    present      = (df["Status_Label"] == "Present").sum() if "Status_Label" in df.columns else 0
-    absent       = (df["Status_Label"] == "Absent").sum()  if "Status_Label" in df.columns else 0
-    wo           = (df["Status_Label"] == "Week Off").sum() if "Status_Label" in df.columns else 0
-    total_ot_h   = round(df["Over Time"].sum() / 60, 1)    if "Over Time" in df.columns else 0
-    perfect      = int((summary["Absent"] == 0).sum())      if not summary.empty else 0
+    total_emp  = df["Emp Name"].nunique() if "Emp Name" in df.columns else 0
+    present    = int((df["Status_Label"] == "Present").sum()) if "Status_Label" in df.columns else 0
+    absent     = int((df["Status_Label"] == "Absent").sum())  if "Status_Label" in df.columns else 0
+    wo         = int((df["Status_Label"] == "Week Off").sum()) if "Status_Label" in df.columns else 0
+    total_ot_h = round(df["Over Time"].sum() / 60, 1) if "Over Time" in df.columns else 0
+    perfect    = int((summary["Absent"] == 0).sum()) if not summary.empty else 0
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total Employees",     total_emp)
-    c2.metric("Present Entries",     present,  help="All present-day entries this month")
-    c3.metric("Absent Entries",      absent)
-    c4.metric("Week Offs",           wo)
-    c5.metric("Total OT",            f"{total_ot_h} hrs")
-    c6.metric("Perfect Attendance",  perfect,  help="Employees with 0 absents")
+    _kpi_card(c1, "👥", "Total Employees",    total_emp,          "#0f3460", "#f0f4ff")
+    _kpi_card(c2, "✅", "Present Entries",    present,            "#38a169", "#f0fff4")
+    _kpi_card(c3, "❌", "Absent Entries",     absent,             "#e53e3e", "#fff5f5")
+    _kpi_card(c4, "📅", "Week Offs",          wo,                 "#805ad5", "#faf5ff")
+    _kpi_card(c5, "⏱️", "Total OT",          f"{total_ot_h} hrs","#ed8936", "#fffaf0")
+    _kpi_card(c6, "🎯", "Perfect Attendance", perfect,            "#319795", "#e6fffa")
 
 
 # ── Monthly summary table ─────────────────────────────────────────────────────
