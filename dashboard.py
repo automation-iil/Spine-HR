@@ -29,37 +29,110 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* metric cards */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%) !important;
+    }
+    [data-testid="stSidebar"] * { color: #e0e0e0 !important; }
+    [data-testid="stSidebar"] .stSelectbox label,
+    [data-testid="stSidebar"] .stNumberInput label { color: #a0aec0 !important; font-size:12px !important; }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { color:#a0aec0 !important; }
+    [data-testid="stSidebar"] hr { border-color: #2d3748 !important; }
+
+    /* ── Header banner ── */
+    .dash-header {
+        background: linear-gradient(135deg, #1a1a2e 0%, #0f3460 50%, #533483 100%);
+        padding: 24px 32px; border-radius: 16px; margin-bottom: 20px;
+        display: flex; align-items: center; justify-content: space-between;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    .dash-title { font-size: 28px; font-weight: 800; color: #ffffff !important; margin: 0; }
+    .dash-sub   { font-size: 13px; color: #a0c4ff !important; margin: 4px 0 0; }
+    .dash-badge {
+        background: rgba(255,255,255,0.15); border-radius: 20px;
+        padding: 6px 16px; font-size: 13px; color: #ffffff !important;
+        backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    /* ── KPI metric cards ── */
+    [data-testid="stMetric"] {
+        background: #ffffff; border-radius: 14px;
+        padding: 16px 20px !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        border-left: 4px solid #0f3460;
+    }
+    [data-testid="stMetricLabel"] { font-size: 12px !important; color: #718096 !important; font-weight:600 !important; }
+    [data-testid="stMetricValue"] { font-size: 28px !important; color: #1a1a2e !important; font-weight:800 !important; }
+
+    /* ── Tabs ── */
+    div[data-testid="stTabs"] button {
+        font-size: 14px; font-weight: 600;
+        border-radius: 8px 8px 0 0;
+        padding: 10px 20px;
+        color: #4a5568 !important;
+    }
+    div[data-testid="stTabs"] button[aria-selected="true"] {
+        color: #0f3460 !important;
+        border-bottom: 3px solid #0f3460 !important;
+        background: #eef2ff !important;
+    }
+
+    /* ── Employee metric cards ── */
     .emp-card {
-        background:#ffffff !important; border-radius:12px;
-        padding:16px 18px; margin-bottom:10px;
-        border-top:4px solid #0066cc;
-        box-shadow:0 1px 4px rgba(0,0,0,.10);
-        text-align:center;
+        background: #ffffff; border-radius: 14px;
+        padding: 18px 16px; margin-bottom: 10px;
+        border-top: 4px solid #0f3460;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+        text-align: center; transition: transform 0.2s;
     }
-    .emp-card.green  { border-color:#28a745; }
-    .emp-card.red    { border-color:#dc3545; }
-    .emp-card.orange { border-color:#fd7e14; }
-    .emp-card.purple { border-color:#6f42c1; }
-    .emp-card.teal   { border-color:#20c997; }
-    .emp-card.blue   { border-color:#0066cc; }
+    .emp-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+    .emp-card.green  { border-color: #38a169; }
+    .emp-card.red    { border-color: #e53e3e; }
+    .emp-card.orange { border-color: #ed8936; }
+    .emp-card.purple { border-color: #805ad5; }
+    .emp-card.teal   { border-color: #319795; }
+    .emp-card.blue   { border-color: #3182ce; }
 
-    .emp-val { font-size:26px; font-weight:800; margin:4px 0 2px; color:#1a1a2e !important; }
-    .emp-lbl { font-size:12px; color:#555555 !important; margin:0; }
-    .emp-sub { font-size:11px; color:#888888 !important; margin-top:2px; }
+    .emp-val { font-size: 28px; font-weight: 800; margin: 4px 0 2px; color: #1a1a2e !important; }
+    .emp-lbl { font-size: 11px; font-weight: 600; text-transform: uppercase;
+               letter-spacing: 0.5px; color: #718096 !important; margin: 0; }
+    .emp-sub { font-size: 11px; color: #a0aec0 !important; margin-top: 3px; }
 
-    /* leaderboard rows */
+    /* ── Leaderboard rows ── */
     .lb-row {
-        display:flex; align-items:center; justify-content:space-between;
-        padding:8px 12px; border-radius:8px; margin-bottom:5px;
-        background:#f0f2f6 !important;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 14px; border-radius: 10px; margin-bottom: 6px;
+        background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+        border-left: 3px solid #e2e8f0; transition: all 0.2s;
     }
-    .lb-rank { font-size:18px; font-weight:700; color:#888888 !important; width:30px; }
-    .lb-name { font-size:14px; font-weight:600; color:#1a1a2e !important; flex:1; padding:0 10px; }
-    .lb-val  { font-size:14px; font-weight:700; color:#0066cc !important; white-space:nowrap; }
+    .lb-row:hover { background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%);
+                    border-left-color: #0f3460; }
+    .lb-rank { font-size: 18px; width: 32px; }
+    .lb-name { font-size: 14px; font-weight: 600; color: #2d3748 !important; flex: 1; padding: 0 12px; }
+    .lb-val  { font-size: 13px; font-weight: 700; color: #0f3460 !important;
+               background: #ebf8ff; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
 
-    [data-testid="stDataFrame"] { border-radius:8px; }
-    div[data-testid="stTabs"] button { font-size:15px; font-weight:600; }
+    /* ── Section headers ── */
+    .section-title {
+        font-size: 16px; font-weight: 700; color: #1a1a2e !important;
+        padding: 8px 0 6px; border-bottom: 2px solid #e2e8f0;
+        margin-bottom: 14px;
+    }
+
+    /* ── DataFrames ── */
+    [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden;
+                                   box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+
+    /* ── Warning / info boxes ── */
+    [data-testid="stAlert"] { border-radius: 10px !important; }
+
+    /* ── General ── */
+    .block-container { padding-top: 1rem !important; }
+    hr { border-color: #e2e8f0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -775,12 +848,17 @@ def render_department_tab(df: pd.DataFrame, summary: pd.DataFrame):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    st.title("📋 Attendance Dashboard")
     today = date.today()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.header("Controls")
+        st.markdown(
+            '<p style="font-size:20px;font-weight:800;color:#ffffff !important;'
+            'margin-bottom:4px;">⚙️ Controls</p>'
+            '<p style="font-size:11px;color:#a0aec0 !important;margin-bottom:16px;">'
+            'Indian Inovatix — Attendance</p>',
+            unsafe_allow_html=True,
+        )
         sel_month = st.selectbox(
             "Month", range(1, 13), index=today.month - 1,
             format_func=lambda m: calendar.month_name[m],
@@ -900,10 +978,16 @@ def main():
     data_year  = int(raw.get("year",  sel_year))
     fetched_at = raw.get("fetched_at", "")[:19].replace("T", " ")
 
-    st.caption(
-        f"**{calendar.month_name[data_month]} {data_year}**  ·  "
-        f"{len(records)} records  ·  Last fetched: {fetched_at}  ·  "
-        f"Source: {raw.get('source', 'eSSL')}"
+    # ── Header banner ─────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="dash-header">'
+        f'<div>'
+        f'<p class="dash-title">📋 Attendance Dashboard</p>'
+        f'<p class="dash-sub">Indian Inovatix · eSSL Biometric · {len(records)} records · Last fetched: {fetched_at}</p>'
+        f'</div>'
+        f'<div class="dash-badge">📅 {calendar.month_name[data_month]} {data_year}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
 
     df      = prepare_df(records)
