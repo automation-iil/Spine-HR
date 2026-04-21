@@ -361,67 +361,205 @@ _LAYOUT_BASE = dict(
                 title_font=dict(color="#333333")),
 )
 
-def render_bar_chart(summary: pd.DataFrame):
-    if summary.empty:
+def render_charts_tab(df: pd.DataFrame, summary: pd.DataFrame):
+    if df.empty or summary.empty:
+        st.info("No data available.")
         return
-    status_cols = [c for c in ["Present", "Absent", "Leave", "Half Day",
-                                "Week Off", "Week Off (Worked)", "Holiday"]
-                   if c in summary.columns]
-    fig = go.Figure()
-    for col in status_cols:
-        fig.add_trace(go.Bar(
-            name=col, x=summary["Emp Name"], y=summary[col],
-            marker_color=STATUS_COLOR.get(col, "#888"),
-        ))
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        barmode="stack", title="Monthly Attendance Breakdown",
-        xaxis_tickangle=-40, yaxis_title="Days",
-        height=420, margin=dict(b=130), legend_title="Status",
-        xaxis=dict(tickfont=_DARK, title_font=_DARK, color="#333333"),
-        yaxis=dict(tickfont=_DARK, title_font=_DARK, color="#333333"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
+    # ── Row 1: Daily Trend + Status Donut ────────────────────────────────────
+    c1, c2 = st.columns([3, 2])
 
-def render_ot_chart(summary: pd.DataFrame):
-    if summary.empty or "Total_OT" not in summary.columns:
-        return
-    s = summary[summary["Total_OT"] > 0].nlargest(15, "Total_OT")
-    if s.empty:
-        return
-    s = s.copy()
-    s["OT_hrs"] = (s["Total_OT"] / 60).round(1)
-    fig = px.bar(s, x="Emp Name", y="OT_hrs",
-                 title="Overtime by Employee (hours)",
-                 color_discrete_sequence=["#fd7e14"],
-                 labels={"OT_hrs": "OT (hrs)", "Emp Name": ""})
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        height=360, xaxis_tickangle=-35,
-        xaxis=dict(tickfont=_DARK, title_font=_DARK, color="#333333"),
-        yaxis=dict(tickfont=_DARK, title_font=_DARK, color="#333333"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    with c1:
+        st.markdown("#### 📈 Daily Present Count")
+        st.caption("How many employees were present each day this month")
+        if "Day" in df.columns:
+            daily = (
+                df[df["Status_Label"] == "Present"]
+                .groupby("Day")["Emp Name"].nunique()
+                .reset_index()
+                .rename(columns={"Emp Name": "Present"})
+            )
+            if not daily.empty:
+                avg_p = int(daily["Present"].mean())
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=daily["Day"], y=daily["Present"],
+                    mode="lines+markers",
+                    line=dict(color="#0f3460", width=3),
+                    marker=dict(size=7, color="#0f3460"),
+                    fill="tozeroy",
+                    fillcolor="rgba(15,52,96,0.08)",
+                    name="Present",
+                ))
+                fig.add_hline(y=avg_p, line_dash="dot",
+                              line_color="#ed8936", line_width=2,
+                              annotation_text=f"Avg: {avg_p}",
+                              annotation_font=dict(color="#ed8936", size=12))
+                fig.update_layout(
+                    **_LAYOUT_BASE, height=280,
+                    xaxis=dict(title="Day of Month", tickfont=_DARK, dtick=2),
+                    yaxis=dict(title="Employees Present", tickfont=_DARK),
+                    margin=dict(t=20, b=40, l=50, r=20),
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
+    with c2:
+        st.markdown("#### 🍩 Status Distribution")
+        st.caption("Overall breakdown of all attendance entries")
+        counts = df["Status_Label"].value_counts()
+        fig = px.pie(
+            names=counts.index, values=counts.values,
+            color=counts.index, color_discrete_map=STATUS_COLOR, hole=0.55,
+        )
+        fig.update_traces(
+            textinfo="percent+label",
+            textfont=dict(color="#333333", size=11),
+        )
+        fig.update_layout(
+            **_LAYOUT_BASE, height=280,
+            showlegend=False,
+            margin=dict(t=20, b=10, l=10, r=10),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-def render_attendance_donut(df: pd.DataFrame):
-    if "Status_Label" not in df.columns:
-        return
-    counts = df["Status_Label"].value_counts()
-    fig = px.pie(
-        names=counts.index, values=counts.values,
-        color=counts.index,
-        color_discrete_map=STATUS_COLOR,
-        hole=0.5,
-        title="Overall Status Distribution",
-    )
-    fig.update_traces(textfont=dict(color="#333333"))
-    fig.update_layout(
-        **_LAYOUT_BASE,
-        height=340, margin=dict(t=50, b=10),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    st.divider()
+
+    # ── Row 2: Attendance % brackets + Top Absent ─────────────────────────────
+    c3, c4 = st.columns(2)
+
+    with c3:
+        st.markdown("#### 🎯 Attendance % Distribution")
+        st.caption("How many employees fall in each attendance bracket")
+        bins   = [0, 50, 70, 80, 90, 95, 101]
+        labels = ["<50%", "50–70%", "70–80%", "80–90%", "90–95%", "95–100%"]
+        colors = ["#e53e3e","#fc8181","#ed8936","#f6e05e","#68d391","#38a169"]
+        s = summary.copy()
+        s["Bracket"] = pd.cut(s["Attendance_Pct"], bins=bins, labels=labels, right=False)
+        bracket_counts = s["Bracket"].value_counts().reindex(labels, fill_value=0).reset_index()
+        bracket_counts.columns = ["Bracket", "Employees"]
+        fig = px.bar(
+            bracket_counts, x="Bracket", y="Employees",
+            color="Bracket", color_discrete_sequence=colors,
+            text="Employees",
+        )
+        fig.update_traces(textposition="outside", textfont=dict(color="#333333", size=13))
+        fig.update_layout(
+            **_LAYOUT_BASE, height=300, showlegend=False,
+            xaxis=dict(tickfont=_DARK, title="Attendance %"),
+            yaxis=dict(tickfont=_DARK, title="No. of Employees"),
+            margin=dict(t=20, b=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with c4:
+        st.markdown("#### ⚠️ Top Absentees")
+        st.caption("Employees with highest absent days this month")
+        top_absent = summary[summary["Absent"] > 0].nlargest(10, "Absent")[["Emp Name","Absent"]].copy()
+        if not top_absent.empty:
+            top_absent = top_absent.sort_values("Absent")
+            fig = px.bar(
+                top_absent, x="Absent", y="Emp Name", orientation="h",
+                color="Absent", color_continuous_scale=["#fc8181","#e53e3e","#9b2335"],
+                text="Absent",
+            )
+            fig.update_traces(textposition="outside", textfont=dict(color="#333333"))
+            fig.update_layout(
+                **_LAYOUT_BASE, height=300, showlegend=False,
+                xaxis=dict(tickfont=_DARK, title="Absent Days"),
+                yaxis=dict(tickfont=_DARK, title=""),
+                coloraxis_showscale=False,
+                margin=dict(t=20, b=40, l=10, r=60),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── Row 3: OT leaders + Late arrivals ────────────────────────────────────
+    c5, c6 = st.columns(2)
+
+    with c5:
+        st.markdown("#### ⏱️ Overtime Leaders")
+        st.caption("Top 10 employees with highest overtime this month")
+        ot = summary[summary["Total_OT"] > 0].nlargest(10, "Total_OT").copy()
+        if not ot.empty:
+            ot["OT_hrs"] = (ot["Total_OT"] / 60).round(1)
+            ot = ot.sort_values("OT_hrs")
+            fig = px.bar(
+                ot, x="OT_hrs", y="Emp Name", orientation="h",
+                color="OT_hrs", color_continuous_scale=["#fbd38d","#ed8936","#c05621"],
+                text="OT_hrs",
+            )
+            fig.update_traces(texttemplate="%{text}h", textposition="outside",
+                              textfont=dict(color="#333333"))
+            fig.update_layout(
+                **_LAYOUT_BASE, height=300, showlegend=False,
+                xaxis=dict(tickfont=_DARK, title="Hours"),
+                yaxis=dict(tickfont=_DARK, title=""),
+                coloraxis_showscale=False,
+                margin=dict(t=20, b=40, l=10, r=60),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with c6:
+        st.markdown("#### 🐢 Most Late Arrivals")
+        st.caption("Top 10 employees by total late minutes")
+        late = summary[summary["Total_Late"] > 0].nlargest(10, "Total_Late").copy()
+        if not late.empty:
+            late["Late_hrs"] = (late["Total_Late"] / 60).round(1)
+            late = late.sort_values("Total_Late")
+            fig = px.bar(
+                late, x="Total_Late", y="Emp Name", orientation="h",
+                color="Total_Late",
+                color_continuous_scale=["#bee3f8","#4299e1","#2b6cb0"],
+                text="Late_hrs",
+            )
+            fig.update_traces(texttemplate="%{text}h late", textposition="outside",
+                              textfont=dict(color="#333333"))
+            fig.update_layout(
+                **_LAYOUT_BASE, height=300, showlegend=False,
+                xaxis=dict(tickfont=_DARK, title="Total Late (min)"),
+                yaxis=dict(tickfont=_DARK, title=""),
+                coloraxis_showscale=False,
+                margin=dict(t=20, b=40, l=10, r=80),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── Row 4: Weekday analysis ───────────────────────────────────────────────
+    st.markdown("#### 📆 Attendance by Day of Week")
+    st.caption("Which weekdays have the most absences vs presence")
+    if "Date" in df.columns:
+        wd = df.copy()
+        wd["Weekday"] = wd["Date"].dt.day_name()
+        order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        wd_grp = (
+            wd.groupby(["Weekday","Status_Label"])
+            .size().unstack(fill_value=0).reset_index()
+        )
+        for col in ["Present","Absent","Week Off","Half Day"]:
+            if col not in wd_grp.columns:
+                wd_grp[col] = 0
+        wd_grp["Weekday"] = pd.Categorical(wd_grp["Weekday"], categories=order, ordered=True)
+        wd_grp = wd_grp.sort_values("Weekday")
+
+        fig = go.Figure()
+        for col, color in [("Present","#38a169"),("Absent","#e53e3e"),
+                            ("Half Day","#17a2b8"),("Week Off","#a0aec0")]:
+            if col in wd_grp.columns:
+                fig.add_trace(go.Bar(
+                    name=col, x=wd_grp["Weekday"], y=wd_grp[col],
+                    marker_color=color,
+                ))
+        fig.update_layout(
+            **_LAYOUT_BASE, barmode="group", height=300,
+            xaxis=dict(tickfont=_DARK),
+            yaxis=dict(tickfont=_DARK, title="Count"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        font=dict(color="#333333")),
+            margin=dict(t=40, b=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ── Top Performers tab ────────────────────────────────────────────────────────
@@ -1060,13 +1198,7 @@ def main():
             )
 
     with tab2:
-        col_l, col_r = st.columns([2, 1])
-        with col_l:
-            render_bar_chart(summary)
-        with col_r:
-            render_attendance_donut(df)
-        st.divider()
-        render_ot_chart(summary)
+        render_charts_tab(df, summary)
 
     with tab3:
         render_top_performers(summary)
