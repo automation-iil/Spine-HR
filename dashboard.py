@@ -1,6 +1,6 @@
 """
-Attendance Dashboard  (eSSL Biometric)
-========================================
+Attendance Dashboard  (Spine HR)
+=====================================
 Streamlit app — monthly attendance overview, top performers,
 and individual employee deep-dive.
 
@@ -129,21 +129,31 @@ st.markdown("""
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 STATUS_LABELS = {
-    "P":         "Present",
-    "A":         "Absent",
-    "WO":        "Week Off",
-    "WOP":       "Week Off (Worked)",
-    "HP":        "Half Day",
-    "HD":        "Half Day",
+    # Standard codes
+    "P":    "Present",
+    "A":    "Absent",
+    "WO":   "Week Off",
+    "WOP":  "Week Off (Worked)",
+    "HP":   "Half Day",
+    "HD":   "Half Day",
     "\u00bdP":   "Half Day",
-    "\ufffdP":   "Half Day",
-    "L":         "Leave",
-    "CL":        "Casual Leave",
-    "EL":        "Earned Leave",
-    "ML":        "Medical Leave",
-    "SL":        "Sick Leave",
-    "OD":        "On Duty",
-    "H":         "Holiday",
+    "L":    "Leave",
+    "CL":   "Casual Leave",
+    "EL":   "Earned Leave",
+    "ML":   "Medical Leave",
+    "SL":   "Sick Leave",
+    "OD":   "On Duty",
+    "H":    "Holiday",
+    # Spine HR codes
+    "DP":   "Present",
+    "ABS":  "Absent",
+    "FP":   "Present",
+    "LWP":  "Leave",
+    "PL":   "Leave",
+    "CO":   "On Duty",
+    "WH":   "Holiday",
+    "PH":   "Holiday",
+    "NH":   "Holiday",
 }
 
 STATUS_COLOR = {
@@ -168,22 +178,45 @@ MEDAL = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8�
 # ── Data helpers ──────────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def load_departments() -> dict:
-    """Load Emp Code → Department mapping from departments.csv."""
-    path = Path("departments.csv")
-    if not path.exists():
-        return {}
+    """
+    Load Emp Code → Department mapping.
+    Primary source: spine_attendance.json employees list (scraped from Spine HR).
+    Fallback: departments.csv (manual override).
+    """
+    mapping = {}
+
+    # ── Primary: JSON employees list (always up-to-date from Spine HR) ────────
     try:
-        df = pd.read_csv(path, dtype=str)
-        df = df.fillna("").rename(columns=str.strip)
-        mapping = {}
-        for _, row in df.iterrows():
-            code = str(row.get("Emp Code", "")).strip()
-            dept = str(row.get("Department", "")).strip()
+        store = json.loads(Path(config.DATA_FILE).read_text(encoding="utf-8"))
+        employees = store.get("employees", [])
+        # Multi-month format stores employees inside each month
+        if not employees and "months" in store:
+            for month_data in store["months"].values():
+                employees = month_data.get("employees", [])
+                if employees:
+                    break
+        for emp in employees:
+            code = str(emp.get("code", "")).strip()
+            dept = str(emp.get("department", "")).strip()
             if code:
                 mapping[code] = dept if dept else "Unassigned"
-        return mapping
     except Exception:
-        return {}
+        pass
+
+    # ── Fallback / override: departments.csv ──────────────────────────────────
+    csv_path = Path("departments.csv")
+    if csv_path.exists():
+        try:
+            csv_df = pd.read_csv(csv_path, dtype=str).fillna("").rename(columns=str.strip)
+            for _, row in csv_df.iterrows():
+                code = str(row.get("Emp Code", "")).strip()
+                dept = str(row.get("Department", "")).strip()
+                if code and dept:
+                    mapping[code] = dept   # CSV overrides JSON
+        except Exception:
+            pass
+
+    return mapping
 
 
 def load_data() -> dict:
@@ -230,24 +263,217 @@ def normalize_status(raw: str) -> str:
     return raw.strip()
 
 
+def _hhmm_to_minutes(val) -> int:
+    """Convert Spine HR HH.MM decimal string (e.g. '9.38' = 9h 38m) to minutes."""
+    try:
+        v = float(val)
+        return int(v) * 60 + round((v % 1) * 100)
+    except Exception:
+        return 0
+
+
+def _time_to_minutes(t_str: str):
+    """Convert '8:22 AM' / '1:30 PM' → minutes since midnight. Returns None on failure."""
+    try:
+        t = str(t_str).strip().upper()
+        if not t or t in ("", "---", "N/A"):
+            return None
+        if "AM" in t:
+            h, m = map(int, t.replace("AM", "").strip().split(":"))
+            return m if h == 12 else h * 60 + m        # 12:xx AM = midnight
+        if "PM" in t:
+            h, m = map(int, t.replace("PM", "").strip().split(":"))
+            return 12 * 60 + m if h == 12 else (h + 12) * 60 + m  # 12:xx PM = noon
+    except Exception:
+        return None
+
+
+HALF_DAY_CUTOFF_MINUTES = 13 * 60  # 1:00 PM
+
+# Office timing
+OFFICE_START_MINUTES  = 9 * 60        # 9:00 AM
+OFFICE_END_MINUTES    = 17 * 60 + 30  # 5:30 PM
+LATE_GRACE_MINUTES    = 5             # 9:05 AM — grace period before marking late
+
+
 def prepare_df(records: list) -> pd.DataFrame:
     df = pd.DataFrame(records)
     if df.empty:
         return df
+
+    # ── Drop garbage header rows (rows without a real Attendance Date) ──────
+    if "Attendance Date" in df.columns:
+        df = df[df["Attendance Date"].notna() & (df["Attendance Date"] != "")].copy()
+    if df.empty:
+        return df
+
+    # ── Derive Status from First Half + Second Half + Portion ───────────────
+    # Spine HR stores each day as two halves; Portion=0.50 means mixed halves.
+    if "Status" not in df.columns and "First Half" in df.columns:
+        def _derive_status(row):
+            fh = str(row.get("First Half", "")).strip()
+            sh = str(row.get("Second Half", "")).strip()
+            portion = str(row.get("Portion", "1.00")).strip()
+
+            # Single-status day (second half is filler or same)
+            if not sh or sh == "---" or sh == fh:
+                return fh
+
+            # Mixed halves → Half Day; prefer the "worked" status for reporting
+            try:
+                is_half = float(portion) <= 0.5
+            except ValueError:
+                is_half = True
+
+            if not is_half:
+                return fh  # treat full-day with mismatch as first half
+
+            # Half-day: pick the most meaningful label
+            halves = {fh, sh} - {"---", ""}
+            if "WOP" in halves:
+                return "WOP"   # worked on week off (even half day)
+            if "DP" in halves:
+                return "HD"    # half present
+            if "CL" in halves or "PL" in halves or "LWP" in halves or "EL" in halves:
+                return fh      # leave type
+            return "HD"        # generic half day
+
+        df["Status"] = df.apply(_derive_status, axis=1)
+
+    # Duration: "Tot. Hrs." in HH.MM format → minutes
+    if "Duration" not in df.columns and "Tot. Hrs." in df.columns:
+        df["Duration"] = df["Tot. Hrs."].apply(_hhmm_to_minutes)
+
+    # Over Time: "OT Hrs." in HH.MM format → minutes
+    if "Over Time" not in df.columns and "OT Hrs." in df.columns:
+        df["Over Time"] = df["OT Hrs."].apply(_hhmm_to_minutes)
+
+    # LateBy: "LateMark" in HH.MM format → minutes
+    if "LateBy" not in df.columns and "LateMark" in df.columns:
+        df["LateBy"] = df["LateMark"].apply(_hhmm_to_minutes)
+
+    # ── Business rule: InTime after 1 PM AND hours worked > 0 → Half Day ────
+    # Conditions (all must be true):
+    #   1. Spine HR shows full present (DP)
+    #   2. Morning shift worker (Shift InTime before 12:00 PM)
+    #   3. Actual punch-in was at or after 1:00 PM
+    #   4. Some hours were actually recorded (Tot. Hrs. > 0) — prevents false
+    #      positives for missed-out-punch records where InTime is an odd value
+    if "InTime" in df.columns and "Status" in df.columns:
+        def _apply_1pm_rule(row):
+            if row["Status"] != "DP":
+                return row["Status"]
+            # Skip evening/night shift workers
+            shift_in = _time_to_minutes(row.get("Shift InTime", ""))
+            if shift_in is not None and shift_in >= 12 * 60:
+                return row["Status"]
+            # Skip records with no recorded hours (missed punch)
+            try:
+                hrs = float(row.get("Tot. Hrs.", "0") or "0")
+            except ValueError:
+                hrs = 0
+            if hrs <= 0:
+                return row["Status"]
+            # Apply rule: InTime at or after 1 PM → half day
+            in_min = _time_to_minutes(row.get("InTime", ""))
+            if in_min is not None and in_min >= HALF_DAY_CUTOFF_MINUTES:
+                return "HD"
+            return row["Status"]
+        df["Status"] = df.apply(_apply_1pm_rule, axis=1)
+
+    # ── Recalculate LateBy from InTime (office start = 9:00 AM, grace 5 min) ──
+    # Spine HR's LateMark is often 0 or missing; we derive it ourselves.
+    # Only applies to regular working days (not WO/Holiday rows).
+    if "InTime" in df.columns:
+        def _calc_late(row):
+            status = str(row.get("Status", "")).upper()
+            # Skip week-offs, holidays, absences
+            if status in ("WO", "WOP", "WH", "PH", "NH", "ABS", ""):
+                return 0
+            in_min = _time_to_minutes(row.get("InTime", ""))
+            if in_min is None or in_min == 0:
+                return int(row.get("LateBy", 0) or 0)
+            late = in_min - (OFFICE_START_MINUTES + LATE_GRACE_MINUTES)
+            return max(late, 0)
+        df["LateBy"] = df.apply(_calc_late, axis=1)
+
+    # ── Normalise status ─────────────────────────────────────────────────────
     if "Status" in df.columns:
         df["Status_Label"] = df["Status"].apply(normalize_status)
+
+    # ── Parse date — handle both 'dd-Mon-yy' (Spine) and 'dd Mon yyyy' ──────
     if "Attendance Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Attendance Date"], format="%d %b %Y", errors="coerce")
-        df["Day"]  = df["Date"].dt.day
+        df["Date"] = pd.to_datetime(df["Attendance Date"], format="%d-%b-%y", errors="coerce")
+        mask = df["Date"].isna()
+        if mask.any():
+            df.loc[mask, "Date"] = pd.to_datetime(
+                df.loc[mask, "Attendance Date"], format="%d %b %Y", errors="coerce"
+            )
+        df["Day"] = df["Date"].dt.day
+
+    # ── Numeric columns (already in minutes after mapping above) ────────────
     for col in ["Duration", "Over Time", "LateBy", "EarlyBy"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-    # Add Department from mapping
+
+    # ── Department mapping ────────────────────────────────────────────────────
+    # Records scraped after the dept-stamping fix already carry a Department
+    # column from Spine HR. For older records (or gaps), fall back to the
+    # mapping built from the employees list / departments.csv.
     dept_map = load_departments()
+    if "Department" not in df.columns:
+        df["Department"] = ""
     if dept_map and "Emp Code" in df.columns:
-        df["Department"] = df["Emp Code"].astype(str).map(dept_map).fillna("Unassigned")
-    else:
-        df["Department"] = "Unassigned"
+        mask = df["Department"].isna() | (df["Department"] == "")
+        df.loc[mask, "Department"] = (
+            df.loc[mask, "Emp Code"].astype(str).map(dept_map)
+        )
+    df["Department"] = df["Department"].fillna("Unassigned").replace("", "Unassigned")
+
+    # ── Fill missing working days as Absent ──────────────────────────────────
+    # A company working day is any date where at least one employee has a
+    # regular attendance record (Present/Absent/Half Day/Leave/On Duty).
+    # For each employee, any such date that falls within their active range
+    # (first record ↔ last record) but has no record is treated as Absent.
+    if "Date" in df.columns and "Status_Label" in df.columns and "Emp Code" in df.columns:
+        regular_statuses = {
+            "Present", "Absent", "Half Day", "Leave", "Casual Leave",
+            "Earned Leave", "Medical Leave", "Sick Leave", "On Duty",
+        }
+        company_working_dates = set(
+            df.loc[df["Status_Label"].isin(regular_statuses), "Date"].dropna().unique()
+        )
+        if company_working_dates:
+            dept_map_fill = load_departments()
+            missing_rows = []
+            for emp_code, grp in df.groupby("Emp Code"):
+                emp_name = grp["Emp Name"].iloc[0] if "Emp Name" in grp.columns else ""
+                # Prefer dept already on the record; fall back to map
+                dept_vals = grp["Department"].replace("Unassigned", "").replace("", pd.NA).dropna()
+                dept = dept_vals.iloc[0] if not dept_vals.empty else \
+                       dept_map_fill.get(str(emp_code), "Unassigned")
+                emp_dates = set(grp["Date"].dropna())
+                first_date = grp["Date"].min()
+                last_date  = grp["Date"].max()
+                for d in company_working_dates:
+                    if first_date <= d <= last_date and d not in emp_dates:
+                        missing_rows.append({
+                            "Emp Code":       emp_code,
+                            "Emp Name":       emp_name,
+                            "Attendance Date": pd.Timestamp(d).strftime("%d-%b-%y"),
+                            "Date":           d,
+                            "Day":            pd.Timestamp(d).day,
+                            "Status":         "ABS",
+                            "Status_Label":   "Absent",
+                            "Duration":       0,
+                            "Over Time":      0,
+                            "LateBy":         0,
+                            "EarlyBy":        0,
+                            "Department":     dept,
+                        })
+            if missing_rows:
+                df = pd.concat([df, pd.DataFrame(missing_rows)], ignore_index=True)
+
     return df
 
 
@@ -270,6 +496,11 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     keep = ["Emp Code", "Emp Name"] + [c for c in SUMMARY_STATUS_COLS if c in grp.columns]
     grp = grp[keep]
 
+    # Ensure numeric columns exist before aggregation
+    for col in ["Over Time", "LateBy", "Duration"]:
+        if col not in df.columns:
+            df[col] = 0
+
     ot = (
         df.groupby(["Emp Code", "Emp Name"])
         .agg(
@@ -289,10 +520,28 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     # Working days = total days - week offs (this is what attendance % should be based on)
     wo_days  = grp["Week Off"] if "Week Off" in grp.columns else 0
     wop_days = grp["Week Off (Worked)"] if "Week Off (Worked)" in grp.columns else 0
-    grp["Total_Days"]        = total_days
-    grp["Working_Days_Net"]  = (total_days - wo_days).clip(lower=1)  # exclude pure week offs
-    grp["Attendance_Pct"]    = (grp["Present"] * 100 / grp["Working_Days_Net"]).round(1).clip(upper=100)
-    grp["WO_Pct"]            = (wo_days * 100 / total_days).round(1)
+    # ── Working days: days company was OPEN (exclude Sundays/holidays = days
+    # where every employee either has no record or only WO/WOP records) ────────
+    non_off_statuses = {"Present", "Absent", "Half Day", "Leave", "Casual Leave",
+                        "Earned Leave", "Medical Leave", "Sick Leave", "On Duty"}
+    company_open_days = (
+        df[df["Status_Label"].isin(non_off_statuses)]["Date"].nunique()
+        if "Date" in df.columns and "Status_Label" in df.columns
+        else total_days
+    )
+    company_open_days = max(company_open_days, 1)
+
+    half_col = grp["Half Day"] if "Half Day" in grp.columns else 0
+    wop_col  = grp["Week Off (Worked)"] if "Week Off (Worked)" in grp.columns else 0
+
+    grp["Total_Days"]        = company_open_days
+    grp["Working_Days_Net"]  = (company_open_days - wo_days).clip(lower=1)
+    # Present + 0.5 × Half Day (half days count as half attendance)
+    grp["Effective_Present"] = (grp["Present"] + half_col * 0.5).round(1)
+    grp["Attendance_Pct"]    = (
+        grp["Effective_Present"] * 100 / grp["Working_Days_Net"]
+    ).round(1).clip(upper=100)
+    grp["WO_Pct"]            = (wo_days * 100 / company_open_days).round(1)
     return grp
 
 
@@ -337,16 +586,19 @@ def render_summary_table(summary: pd.DataFrame):
     if summary.empty:
         st.warning("No data.")
         return
-    show = ["Emp Code", "Emp Name", "Present", "Absent", "Half Day",
-            "Leave", "Week Off", "Working_Days", "Attendance_Pct",
+    show = ["Emp Code", "Emp Name", "Present", "Half Day", "Absent",
+            "Leave", "Casual Leave", "Week Off", "Week Off (Worked)",
+            "Effective_Present", "Working_Days_Net", "Attendance_Pct",
             "Total_OT", "Total_Late", "Late_Days"]
     cols = [c for c in show if c in summary.columns]
     disp = summary[cols].rename(columns={
-        "Working_Days":   "Worked Days",
-        "Attendance_Pct": "Attend %",
-        "Total_OT":       "OT (min)",
-        "Total_Late":     "Late (min)",
-        "Late_Days":      "Late Days",
+        "Effective_Present":  "Eff. Present",
+        "Working_Days_Net":   "Working Days",
+        "Attendance_Pct":     "Attend %",
+        "Week Off (Worked)":  "WOP",
+        "Total_OT":           "OT (min)",
+        "Total_Late":         "Late (min)",
+        "Late_Days":          "Late Days",
     }).sort_values("Emp Name", ignore_index=True)
     st.dataframe(disp, use_container_width=True, height=min(60 + 36 * len(disp), 680))
 
@@ -694,6 +946,8 @@ def _metric_card(col, label: str, value: str, sub: str = "", color: str = "blue"
 
 def render_employee_metrics(summary: pd.DataFrame, df: pd.DataFrame, emp_name: str,
                              data_year: int, data_month: int):
+    if summary.empty or "Emp Name" not in summary.columns:
+        return
     row = summary[summary["Emp Name"] == emp_name]
     if row.empty:
         return
@@ -701,6 +955,7 @@ def render_employee_metrics(summary: pd.DataFrame, df: pd.DataFrame, emp_name: s
 
     total_days   = int(r.get("Total_Days", df["Date"].nunique() if "Date" in df.columns else 1))
     present      = int(r.get("Present", 0))
+    half_day     = int(r.get("Half Day", 0))
     absent       = int(r.get("Absent", 0))
     wo           = int(r.get("Week Off", 0))
     wop          = int(r.get("Week Off (Worked)", 0))
@@ -711,23 +966,24 @@ def render_employee_metrics(summary: pd.DataFrame, df: pd.DataFrame, emp_name: s
     late_days    = int(r.get("Late_Days", 0))
     avg_dur      = int(r.get("Avg_Duration", 0))
 
-    # Working days = total - week offs (correct base for attendance %)
-    working_days = max(total_days - wo, 1)
-    att_pct      = round(min(present * 100 / working_days, 100), 1)
-    wo_pct       = round(wo * 100 / total_days, 1) if total_days else 0
-    absent_pct   = round(absent * 100 / working_days, 1) if working_days else 0
+    # Working days = company open days − employee's pure week offs
+    working_days  = int(r.get("Working_Days_Net", max(total_days - wo, 1)))
+    eff_present   = round(present + half_day * 0.5, 1)   # half days count as 0.5
+    att_pct       = round(min(eff_present * 100 / working_days, 100), 1)
+    wo_pct        = round(wo * 100 / total_days, 1) if total_days else 0
+    absent_pct    = round(absent * 100 / working_days, 1) if working_days else 0
 
     ot_str  = f"{ot_min//60}h {ot_min%60}m" if ot_min else "0h 0m"
     dur_str = f"{avg_dur//60}h {avg_dur%60}m" if avg_dur else "--"
 
     # ── Row 1: Attendance metrics ─────────────────────────────────────────────
-    st.caption(f"📅 Total days: **{total_days}**  |  Week Offs: **{wo}**  |  "
-               f"Working Days (excl. WO): **{working_days}**")
+    st.caption(f"📅 Company working days: **{total_days}**  |  Half Days: **{half_day}**  |  "
+               f"Worked on Week Off: **{wop}**  |  Eff. Present: **{eff_present}**")
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     _metric_card(c1, "Attendance %",
                  f"{att_pct}%",
-                 f"{present}/{working_days} working days",
+                 f"{eff_present}/{working_days} working days",
                  "green" if att_pct >= 90 else "orange" if att_pct >= 75 else "red")
     _metric_card(c2, "Present Days",
                  str(present),
@@ -871,16 +1127,21 @@ def render_daily_detail(df: pd.DataFrame, emp_name: str):
     if emp_df.empty:
         st.info("No records found.")
         return
-    show   = ["Attendance Date", "Status_Label", "InTime", "OutTime",
-              "Shift", "Duration", "Over Time", "LateBy", "EarlyBy", "PunchRecords"]
+    show   = ["Attendance Date", "Day", "Status_Label", "InTime", "OutTime",
+              "Shift Code", "Shift", "Duration", "Over Time", "LateBy", "EarlyBy",
+              "Tot. Hrs.", "OT Hrs.", "LateMark", "Remarks", "PunchRecords"]
     cols   = [c for c in show if c in emp_df.columns]
     rename = {
         "Status_Label":    "Status",
         "Attendance Date": "Date",
         "Over Time":       "OT (min)",
+        "OT Hrs.":         "OT",
         "LateBy":          "Late (min)",
+        "LateMark":        "Late Mark",
+        "Tot. Hrs.":       "Total Hrs",
         "EarlyBy":         "Early (min)",
         "PunchRecords":    "Punches",
+        "Shift Code":      "Shift",
     }
     disp = emp_df[cols].rename(columns=rename)
     if "Date" in disp.columns:
@@ -892,8 +1153,11 @@ def render_daily_detail(df: pd.DataFrame, emp_name: str):
 # ── Department tab ────────────────────────────────────────────────────────────
 def render_department_tab(df: pd.DataFrame, summary: pd.DataFrame):
     if "Department" not in df.columns or df["Department"].eq("Unassigned").all():
-        st.warning("No department data found. Please fill in **departments.csv** and push to GitHub.")
-        st.info("Open `D:\\Spine HR\\departments.csv` in Excel, fill the Department column, save, then run:\n```\ngit add departments.csv\ngit commit -m 'add departments'\ngit push\n```")
+        st.warning(
+            "No department data found in the scraped data. "
+            "Re-scrape using **🔄 Refresh from Spine HR** — department names are "
+            "fetched automatically from Spine HR's employee list."
+        )
         return
 
     dept_df = df.copy()
@@ -1011,26 +1275,16 @@ def main():
         )
         sel_year = st.number_input("Year", 2020, 2030, today.year)
 
-        # Department filter
+        # Department filter — reads directly from Spine HR JSON (no CSV needed)
         dept_map = load_departments()
         all_depts = sorted(set(d for d in dept_map.values() if d and d != "Unassigned"))
         if all_depts:
             dept_options = ["All Departments"] + all_depts + ["Unassigned"]
-            sel_dept = st.selectbox("Department", dept_options)
+            sel_dept = st.selectbox("🏢 Department", dept_options)
         else:
             sel_dept = "All Departments"
+            st.caption("Departments load after first scrape.")
         st.divider()
-
-        # ── Show Refresh only if eSSL machine is reachable (local only) ─────
-        import socket as _sock
-        def _essl_reachable():
-            try:
-                _sock.setdefaulttimeout(2)
-                _sock.create_connection(("192.168.10.105", 89), timeout=2).close()
-                return True
-            except Exception:
-                return False
-        _local_mode = _essl_reachable()
 
         # ── Background scrape state ───────────────────────────────────────────
         if "scrape_proc" not in st.session_state:
@@ -1041,10 +1295,7 @@ def main():
             and st.session_state.scrape_proc.poll() is None
         )
 
-        if not _local_mode:
-            st.caption("📊 View-only mode — data updated by admin")
-
-        elif scraping:
+        if scraping:
             st.info("Scraping in progress…")
             prog = load_data()
             done = len(prog.get("records", [])) if prog else 0
@@ -1071,15 +1322,12 @@ def main():
                 else:
                     st.warning("Scrape ended (check data below).")
 
-            if st.button("🔄 Refresh from Biometric", type="primary"):
+            if st.button("🔄 Refresh from Spine HR", type="primary"):
                 import subprocess, sys
                 from pathlib import Path as _P
                 cmd = [
                     sys.executable,
-                    str(_P(__file__).parent / "read_essl_data.py"),
-                    "--year",  str(int(sel_year)),
-                    "--month", str(int(sel_month)),
-                    "--headless",
+                    str(_P(__file__).parent / "spine_scraper.py"),
                 ]
                 proc = subprocess.Popen(cmd, cwd=str(_P(__file__).parent))
                 st.session_state.scrape_proc = proc
@@ -1087,14 +1335,14 @@ def main():
 
         st.divider()
         st.caption(
-            f"Source: eSSL eTimeTrackLite\n"
+            f"Source: Spine HR (inovatix.spinehrm.in)\n"
             f"File: `{config.DATA_FILE}`"
         )
 
     # ── Load data for selected month ──────────────────────────────────────────
     store = load_data()
     if not store:
-        st.warning("No data found. Run **scrape.bat** or click Refresh.")
+        st.warning("No data found. Click **Refresh from Spine HR** in the sidebar to scrape attendance data.")
         st.stop()
 
     raw = load_month(int(sel_year), int(sel_month))
@@ -1143,7 +1391,7 @@ def main():
         f'{logo_html}'
         f'<div>'
         f'<p class="dash-title">Indian Inovatix Limited</p>'
-        f'<p class="dash-sub">📋 Attendance Dashboard · eSSL Biometric · {len(records)} records · Last fetched: {fetched_at}</p>'
+        f'<p class="dash-sub">📋 Attendance Dashboard · Spine HR · {len(records)} records · Last fetched: {fetched_at}</p>'
         f'</div>'
         f'</div>'
         f'<div class="dash-badge">📅 {calendar.month_name[data_month]} {data_year}</div>'

@@ -1,40 +1,24 @@
+﻿# Python
 __pycache__/
-*.pyc
-scraper_ui.py
-read_essl_data.py
-scrape.bat
-start_dashboard.bat
+*.py[cod]
 
-# Expense app - local data only
-expense_app.py
-expenses.json
-bills/
-start_expense_app.bat
-
-# Android project
-AttendanceApp/
-AttendanceDashboard.apk
-push_data.bat
-jdk8/
-
-# Temp/system files
-*.tmp
+# Logs & debug
 *.log
-
-# Debug HTML dumps
 *.html
 
-# Inspect / debug scripts
-inspect_*.py
-investigate_*.py
-spine_scraper.py
-test_*.py
+# Expenses (private)
+expenses.json
+expense_app.py
+bills/
 
-# Other local files
-attendance_data.json
-cctv_app.py
-Push.txt
-.claude/
-fetch_log.txt
-jdk8.zip
-run_daily.bat
+# Android app
+AttendanceApp/
+*.apk
+
+# Old data
+essl_*.json
+attendance_*.csv
+
+# Windows
+Thumbs.db
+desktop.ini
