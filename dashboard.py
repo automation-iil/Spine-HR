@@ -352,34 +352,33 @@ def prepare_df(records: list) -> pd.DataFrame:
     if "LateBy" not in df.columns and "LateMark" in df.columns:
         df["LateBy"] = df["LateMark"].apply(_hhmm_to_minutes)
 
-    # ── Business rule: InTime after 1 PM AND hours worked > 0 → Half Day ────
-    # Conditions (all must be true):
-    #   1. Spine HR shows full present (DP)
-    #   2. Morning shift worker (Shift InTime before 12:00 PM)
-    #   3. Actual punch-in was at or after 1:00 PM
-    #   4. Some hours were actually recorded (Tot. Hrs. > 0) — prevents false
-    #      positives for missed-out-punch records where InTime is an odd value
+    # ── Half-day business rules ───────────────────────────────────────────────
+    # Rule 1: InTime between 1:00 PM and 2:00 PM → Half Day (late arrival)
+    # Rule 2: OutTime at or before 1:00 PM → Half Day (left early)
+    # Applies only to full-present (DP) morning-shift records with hours > 0
     if "InTime" in df.columns and "Status" in df.columns:
-        def _apply_1pm_rule(row):
+        def _apply_halfday_rules(row):
             if row["Status"] != "DP":
                 return row["Status"]
-            # Skip evening/night shift workers
             shift_in = _time_to_minutes(row.get("Shift InTime", ""))
             if shift_in is not None and shift_in >= 12 * 60:
                 return row["Status"]
-            # Skip records with no recorded hours (missed punch)
             try:
                 hrs = float(row.get("Tot. Hrs.", "0") or "0")
             except ValueError:
                 hrs = 0
             if hrs <= 0:
                 return row["Status"]
-            # Apply rule: InTime at or after 1 PM → half day
-            in_min = _time_to_minutes(row.get("InTime", ""))
-            if in_min is not None and in_min >= HALF_DAY_CUTOFF_MINUTES:
+            in_min  = _time_to_minutes(row.get("InTime",  ""))
+            out_min = _time_to_minutes(row.get("OutTime", ""))
+            # Late arrival: came between 1 PM and 2 PM
+            if in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < 14 * 60:
+                return "HD"
+            # Left early: out punch at or before 1 PM
+            if out_min is not None and out_min > 0 and out_min <= HALF_DAY_CUTOFF_MINUTES:
                 return "HD"
             return row["Status"]
-        df["Status"] = df.apply(_apply_1pm_rule, axis=1)
+        df["Status"] = df.apply(_apply_halfday_rules, axis=1)
 
     # ── Recalculate LateBy from InTime (office start = 9:00 AM, grace 5 min) ──
     # Spine HR's LateMark is often 0 or missing; we derive it ourselves.
@@ -661,16 +660,25 @@ def render_charts_tab(df: pd.DataFrame, summary: pd.DataFrame):
         counts = df["Status_Label"].value_counts()
         fig = px.pie(
             names=counts.index, values=counts.values,
-            color=counts.index, color_discrete_map=STATUS_COLOR, hole=0.55,
+            color=counts.index, color_discrete_map=STATUS_COLOR, hole=0.45,
         )
         fig.update_traces(
-            textinfo="percent+label",
-            textfont=dict(color="#333333", size=11),
+            textinfo="percent",
+            textposition="inside",
+            textfont=dict(color="#ffffff", size=12),
+            insidetextorientation="radial",
         )
         fig.update_layout(
-            **_LAYOUT_BASE, height=280,
-            showlegend=False,
-            margin=dict(t=20, b=10, l=10, r=10),
+            **_LAYOUT_BASE, height=340,
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                x=1.02, y=0.5,
+                xanchor="left", yanchor="middle",
+                font=dict(color="#333333", size=11),
+                bgcolor="white",
+            ),
+            margin=dict(t=20, b=20, l=10, r=130),
         )
         st.plotly_chart(fig, use_container_width=True)
 
