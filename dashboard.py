@@ -273,17 +273,23 @@ def _hhmm_to_minutes(val) -> int:
 
 
 def _time_to_minutes(t_str: str):
-    """Convert '8:22 AM' / '1:30 PM' → minutes since midnight. Returns None on failure."""
+    """Convert time string to minutes since midnight. Returns None on failure.
+    Handles: '8:22 AM', '1:30 PM', '13:00', '09:22' (both 12h and 24h formats)."""
     try:
         t = str(t_str).strip().upper()
-        if not t or t in ("", "---", "N/A"):
+        if not t or t in ("", "---", "N/A", "0:00", "00:00"):
             return None
         if "AM" in t:
             h, m = map(int, t.replace("AM", "").strip().split(":"))
-            return m if h == 12 else h * 60 + m        # 12:xx AM = midnight
+            return m if h == 12 else h * 60 + m
         if "PM" in t:
             h, m = map(int, t.replace("PM", "").strip().split(":"))
-            return 12 * 60 + m if h == 12 else (h + 12) * 60 + m  # 12:xx PM = noon
+            return 12 * 60 + m if h == 12 else (h + 12) * 60 + m
+        # 24-hour format: HH:MM or H:MM
+        if ":" in t:
+            parts = t.split(":")
+            h, m = int(parts[0]), int(parts[1][:2])
+            return h * 60 + m
     except Exception:
         return None
 
