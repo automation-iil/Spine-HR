@@ -354,8 +354,9 @@ def prepare_df(records: list) -> pd.DataFrame:
 
     # ── Half-day business rules ───────────────────────────────────────────────
     # Rule 1: InTime between 1:00 PM and 2:00 PM → Half Day (late arrival)
-    # Rule 2: OutTime at or before 1:00 PM → Half Day (left early)
+    # Rule 2: OutTime at or before 2:00 PM → Half Day (left early, incl. after 1 PM)
     # Applies only to full-present (DP) morning-shift records with hours > 0
+    EARLY_OUT_CUTOFF = 14 * 60   # 2:00 PM — leaving at or before this = half day
     if "InTime" in df.columns and "Status" in df.columns:
         def _apply_halfday_rules(row):
             if row["Status"] != "DP":
@@ -374,8 +375,8 @@ def prepare_df(records: list) -> pd.DataFrame:
             # Late arrival: came between 1 PM and 2 PM
             if in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < 14 * 60:
                 return "HD"
-            # Left early: out punch at or before 1 PM
-            if out_min is not None and out_min > 0 and out_min <= HALF_DAY_CUTOFF_MINUTES:
+            # Left early: punched out at or before 2:00 PM (covers 1 PM and after)
+            if out_min is not None and out_min > 0 and out_min <= EARLY_OUT_CUTOFF:
                 return "HD"
             return row["Status"]
         df["Status"] = df.apply(_apply_halfday_rules, axis=1)
