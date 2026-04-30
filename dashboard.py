@@ -359,10 +359,14 @@ def prepare_df(records: list) -> pd.DataFrame:
         df["LateBy"] = df["LateMark"].apply(_hhmm_to_minutes)
 
     # ── Half-day business rules ───────────────────────────────────────────────
-    # Rule 1: InTime between 1:00 PM and 2:00 PM → Half Day (late arrival)
-    # Rule 2: OutTime at or before 2:00 PM → Half Day (left early, incl. after 1 PM)
-    # Applies only to full-present (DP) morning-shift records with hours > 0
-    EARLY_OUT_CUTOFF = 14 * 60   # 2:00 PM — leaving at or before this = half day
+    # Rule 1: InTime 1:00 PM – 2:00 PM → Half Day (late arrival)
+    # Rule 2: OutTime ≤ 2:00 PM → Half Day (left early)
+    # Rule 3: InTime 2:00 PM – 2:30 PM AND OutTime ≥ 5:15 PM → Half Day
+    #         (came very late but stayed till end — still counts as half day)
+    EARLY_OUT_CUTOFF  = 14 * 60        # 2:00 PM
+    LATE_IN_START     = 14 * 60        # 2:00 PM
+    LATE_IN_END       = 14 * 60 + 30   # 2:30 PM
+    LATE_STAY_OUT_MIN = 17 * 60 + 15   # 5:15 PM
     if "InTime" in df.columns and "Status" in df.columns:
         def _apply_halfday_rules(row):
             if row["Status"] != "DP":
@@ -378,11 +382,15 @@ def prepare_df(records: list) -> pd.DataFrame:
                 return row["Status"]
             in_min  = _time_to_minutes(row.get("InTime",  ""))
             out_min = _time_to_minutes(row.get("OutTime", ""))
-            # Late arrival: came between 1 PM and 2 PM
-            if in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < 14 * 60:
+            # Rule 1: came between 1 PM and 2 PM
+            if in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < LATE_IN_START:
                 return "HD"
-            # Left early: punched out at or before 2:00 PM (covers 1 PM and after)
+            # Rule 2: left at or before 2 PM
             if out_min is not None and out_min > 0 and out_min <= EARLY_OUT_CUTOFF:
+                return "HD"
+            # Rule 3: came 2:00–2:30 PM but stayed past 5:15 PM
+            if (in_min is not None and LATE_IN_START <= in_min <= LATE_IN_END
+                    and out_min is not None and out_min >= LATE_STAY_OUT_MIN):
                 return "HD"
             return row["Status"]
         df["Status"] = df.apply(_apply_halfday_rules, axis=1)
