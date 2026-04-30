@@ -375,16 +375,22 @@ def prepare_df(records: list) -> pd.DataFrame:
             in_min  = _time_to_minutes(row.get("InTime",  ""))
             out_min = _time_to_minutes(row.get("OutTime", ""))
 
-            # For ABS records: Spine HR marks absent if only punched in afternoon
-            # (Second Half = "---", Portion = 1.00). Override to HD if time rules match.
+            # For ABS records: Spine HR can mark absent due to cutoff rules even
+            # when the employee physically worked a half day. Override to HD if
+            # the punch data shows a genuine half-day pattern.
             if status in ABS_STATUSES:
-                # Rule 3 for ABS: came 2:00–2:30 PM and stayed past 5:15 PM
-                if (in_min is not None and LATE_IN_START <= in_min <= LATE_IN_END
-                        and out_min is not None and out_min >= LATE_STAY_OUT_MIN):
+                # Rule A: morning arrival + left around 1–2 PM (morning half-day)
+                if (in_min is not None and in_min < 12 * 60          # came before noon
+                        and out_min is not None
+                        and HALF_DAY_CUTOFF_MINUTES <= out_min <= EARLY_OUT_CUTOFF):
                     return "HD"
-                # Rule 1 for ABS: came 1 PM–2 PM and has an out-punch
+                # Rule B: came 1 PM–2 PM and has an out-punch (afternoon half-day)
                 if (in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < LATE_IN_START
                         and out_min is not None and out_min > 0):
+                    return "HD"
+                # Rule C: came 2:00–2:30 PM and stayed past 5:15 PM
+                if (in_min is not None and LATE_IN_START <= in_min <= LATE_IN_END
+                        and out_min is not None and out_min >= LATE_STAY_OUT_MIN):
                     return "HD"
                 return row["Status"]
 
