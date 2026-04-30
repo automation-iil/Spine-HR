@@ -367,10 +367,30 @@ def prepare_df(records: list) -> pd.DataFrame:
     LATE_IN_START     = 14 * 60        # 2:00 PM
     LATE_IN_END       = 14 * 60 + 30   # 2:30 PM
     LATE_STAY_OUT_MIN = 17 * 60 + 15   # 5:15 PM
+    PRESENT_STATUSES  = {"DP", "P", "FP", "PR", "PRES", "PRESENT"}
+    ABS_STATUSES      = {"ABS", "A", "ABSENT"}
     if "InTime" in df.columns and "Status" in df.columns:
         def _apply_halfday_rules(row):
-            if row["Status"] != "DP":
+            status = str(row["Status"]).strip().upper()
+            in_min  = _time_to_minutes(row.get("InTime",  ""))
+            out_min = _time_to_minutes(row.get("OutTime", ""))
+
+            # For ABS records: Spine HR marks absent if only punched in afternoon
+            # (Second Half = "---", Portion = 1.00). Override to HD if time rules match.
+            if status in ABS_STATUSES:
+                # Rule 3 for ABS: came 2:00–2:30 PM and stayed past 5:15 PM
+                if (in_min is not None and LATE_IN_START <= in_min <= LATE_IN_END
+                        and out_min is not None and out_min >= LATE_STAY_OUT_MIN):
+                    return "HD"
+                # Rule 1 for ABS: came 1 PM–2 PM and has an out-punch
+                if (in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < LATE_IN_START
+                        and out_min is not None and out_min > 0):
+                    return "HD"
                 return row["Status"]
+
+            if status not in PRESENT_STATUSES:
+                return row["Status"]
+
             shift_in = _time_to_minutes(row.get("Shift InTime", ""))
             if shift_in is not None and shift_in >= 12 * 60:
                 return row["Status"]
@@ -380,15 +400,14 @@ def prepare_df(records: list) -> pd.DataFrame:
                 hrs = 0
             if hrs <= 0:
                 return row["Status"]
-            in_min  = _time_to_minutes(row.get("InTime",  ""))
-            out_min = _time_to_minutes(row.get("OutTime", ""))
+
             # Rule 1: came between 1 PM and 2 PM
             if in_min is not None and HALF_DAY_CUTOFF_MINUTES <= in_min < LATE_IN_START:
                 return "HD"
             # Rule 2: left at or before 2 PM
             if out_min is not None and out_min > 0 and out_min <= EARLY_OUT_CUTOFF:
                 return "HD"
-            # Rule 3: came 2:00–2:30 PM but stayed past 5:15 PM
+            # Rule 3: came 2:00–2:30 PM and stayed past 5:15 PM
             if (in_min is not None and LATE_IN_START <= in_min <= LATE_IN_END
                     and out_min is not None and out_min >= LATE_STAY_OUT_MIN):
                 return "HD"
