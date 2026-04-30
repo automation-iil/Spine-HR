@@ -671,15 +671,15 @@ def render_charts_tab(df: pd.DataFrame, summary: pd.DataFrame):
         fig.update_layout(
             **_LAYOUT_BASE, height=340,
             showlegend=True,
-            legend=dict(
-                orientation="v",
-                x=1.02, y=0.5,
-                xanchor="left", yanchor="middle",
-                font=dict(color="#333333", size=11),
-                bgcolor="white",
-            ),
             margin=dict(t=20, b=20, l=10, r=130),
         )
+        fig.update_layout(legend=dict(
+            orientation="v",
+            x=1.02, y=0.5,
+            xanchor="left", yanchor="middle",
+            font=dict(color="#333333", size=11),
+            bgcolor="white",
+        ))
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
