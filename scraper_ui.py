@@ -72,6 +72,13 @@ class ScraperApp(tk.Tk):
             command=self._start_scrape)
         self.scrape_btn.pack(side="left", padx=6)
 
+        self.push_btn = tk.Button(btns, text="  Push to GitHub  ",
+            font=("Segoe UI", 11, "bold"), bg="#28a745", fg="white",
+            activebackground="#1e7e34", activeforeground="white",
+            relief="flat", padx=20, pady=8, cursor="hand2",
+            command=self._push_only)
+        self.push_btn.pack(side="left", padx=6)
+
         tk.Button(btns, text="Clear Log", font=("Segoe UI", 9),
             bg="#e0e0e0", fg="#333", activebackground="#c8c8c8",
             relief="flat", padx=12, pady=8, cursor="hand2",
@@ -151,9 +158,32 @@ class ScraperApp(tk.Tk):
             self._log(f"\nERROR: {e}", "error")
             self.after(0, self._scrape_done, False, str(e))
 
+    def _push_only(self):
+        import config as _cfg
+        from pathlib import Path as _P
+        if not _P(_cfg.DATA_FILE).exists():
+            messagebox.showerror("Not Found", f"{_cfg.DATA_FILE} not found.\nScrape data first.")
+            return
+        self.push_btn.configure(state="disabled", text="  Pushing...  ")
+        self.status_var.set("Pushing to GitHub...")
+        self._log("── Push to GitHub ──", "info")
+        threading.Thread(target=self._run_push_only, args=(_cfg.DATA_FILE,), daemon=True).start()
+
+    def _run_push_only(self, data_file):
+        try:
+            self._git_push(data_file, None, None)
+            self.after(0, lambda: self.push_btn.configure(state="normal", text="  Push to GitHub  "))
+            self.after(0, lambda: self.status_var.set("Pushed to GitHub."))
+        except Exception as e:
+            self._log(f"Error: {e}", "error")
+            self.after(0, lambda: self.push_btn.configure(state="normal", text="  Push to GitHub  "))
+
     def _git_push(self, data_file, year, month):
         repo_dir   = str(Path(__file__).parent)
-        commit_msg = f"attendance: {MONTHS[month-1]} {year}"
+        from datetime import date as _date
+        commit_msg = (f"attendance: {MONTHS[month-1]} {year}"
+                      if year and month else
+                      f"attendance data update {_date.today()}")
         self._log("\nPushing to GitHub...", "info")
         try:
             for cmd in [["git","add", data_file],
