@@ -479,8 +479,13 @@ def prepare_df(records: list) -> pd.DataFrame:
             "Present", "Absent", "Half Day", "Leave", "Casual Leave",
             "Earned Leave", "Medical Leave", "Sick Leave", "On Duty",
         }
+        # Don't include future dates in working-day calculation
+        today_ts = pd.Timestamp(date.today())
         company_working_dates = set(
-            df.loc[df["Status_Label"].isin(regular_statuses), "Date"].dropna().unique()
+            df.loc[
+                df["Status_Label"].isin(regular_statuses) & (df["Date"] <= today_ts),
+                "Date"
+            ].dropna().unique()
         )
         if company_working_dates:
             dept_map_fill = load_departments()
@@ -559,15 +564,19 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     # Working days = total days - week offs (this is what attendance % should be based on)
     wo_days  = grp["Week Off"] if "Week Off" in grp.columns else 0
     wop_days = grp["Week Off (Worked)"] if "Week Off (Worked)" in grp.columns else 0
-    # ── Working days: days company was OPEN (exclude Sundays/holidays = days
-    # where every employee either has no record or only WO/WOP records) ────────
+    # ── Working days: days company was OPEN (exclude Sundays/holidays).
+    # For the CURRENT month, cap the count at today (not future dates).
     non_off_statuses = {"Present", "Absent", "Half Day", "Leave", "Casual Leave",
                         "Earned Leave", "Medical Leave", "Sick Leave", "On Duty"}
-    company_open_days = (
-        df[df["Status_Label"].isin(non_off_statuses)]["Date"].nunique()
-        if "Date" in df.columns and "Status_Label" in df.columns
-        else total_days
-    )
+    if "Date" in df.columns and "Status_Label" in df.columns:
+        open_dates = df.loc[df["Status_Label"].isin(non_off_statuses), "Date"].dropna()
+        # Cap at today if data spans current month or future
+        today_ts = pd.Timestamp(date.today())
+        if not open_dates.empty and open_dates.max() >= today_ts:
+            open_dates = open_dates[open_dates <= today_ts]
+        company_open_days = open_dates.nunique() if not open_dates.empty else total_days
+    else:
+        company_open_days = total_days
     company_open_days = max(company_open_days, 1)
 
     half_col = grp["Half Day"] if "Half Day" in grp.columns else 0
