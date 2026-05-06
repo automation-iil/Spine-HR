@@ -1304,6 +1304,110 @@ def render_department_tab(df: pd.DataFrame, summary: pd.DataFrame):
         st.plotly_chart(fig4, use_container_width=True)
 
 
+# ── Today's Attendance Snapshot ───────────────────────────────────────────────
+def render_today_snapshot(df: pd.DataFrame, today_d):
+    if "Date" not in df.columns or "Emp Name" not in df.columns:
+        return
+
+    today_ts = pd.Timestamp(today_d)
+    today_df = df[df["Date"] == today_ts].copy() if not df.empty else pd.DataFrame()
+
+    # All employees in the dataset
+    all_emps = set(df["Emp Name"].dropna().unique())
+
+    # Present today (any non-absent status)
+    if not today_df.empty and "Status_Label" in today_df.columns:
+        present_statuses = {"Present", "Half Day", "Week Off (Worked)", "On Duty"}
+        present_today  = set(today_df[today_df["Status_Label"].isin(present_statuses)]["Emp Name"].dropna())
+        halfday_today  = set(today_df[today_df["Status_Label"] == "Half Day"]["Emp Name"].dropna())
+        wo_today       = set(today_df[today_df["Status_Label"].isin({"Week Off","Holiday"})]["Emp Name"].dropna())
+        absent_today   = set(today_df[today_df["Status_Label"] == "Absent"]["Emp Name"].dropna())
+        # Also count employees with no record today as absent
+        no_record_today = all_emps - set(today_df["Emp Name"].dropna())
+        absent_today   = absent_today | no_record_today
+    else:
+        present_today  = set()
+        halfday_today  = set()
+        wo_today       = set()
+        absent_today   = all_emps   # no data yet today = everyone unknown
+
+    total    = len(all_emps)
+    n_pres   = len(present_today)
+    n_abs    = len(absent_today)
+    n_half   = len(halfday_today)
+    n_wo     = len(wo_today)
+
+    st.markdown("### 📅 Today's Attendance")
+    st.caption(f"{today_d.strftime('%A, %d %B %Y')}")
+
+    # KPI row
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(f"""<div style="background:#f0fff4;border-radius:12px;padding:14px;
+        text-align:center;border-top:4px solid #38a169;">
+        <div style="font-size:28px;font-weight:800;color:#276749;">
+        {n_pres}</div><div style="font-size:11px;font-weight:600;
+        color:#38a169;text-transform:uppercase;">Present</div></div>""",
+        unsafe_allow_html=True)
+    c2.markdown(f"""<div style="background:#fff5f5;border-radius:12px;padding:14px;
+        text-align:center;border-top:4px solid #e53e3e;">
+        <div style="font-size:28px;font-weight:800;color:#c53030;">
+        {n_abs}</div><div style="font-size:11px;font-weight:600;
+        color:#e53e3e;text-transform:uppercase;">Absent</div></div>""",
+        unsafe_allow_html=True)
+    c3.markdown(f"""<div style="background:#ebf8ff;border-radius:12px;padding:14px;
+        text-align:center;border-top:4px solid #3182ce;">
+        <div style="font-size:28px;font-weight:800;color:#2b6cb0;">
+        {n_half}</div><div style="font-size:11px;font-weight:600;
+        color:#3182ce;text-transform:uppercase;">Half Day</div></div>""",
+        unsafe_allow_html=True)
+    c4.markdown(f"""<div style="background:#f7fafc;border-radius:12px;padding:14px;
+        text-align:center;border-top:4px solid #a0aec0;">
+        <div style="font-size:28px;font-weight:800;color:#718096;">
+        {n_wo}</div><div style="font-size:11px;font-weight:600;
+        color:#a0aec0;text-transform:uppercase;">Week Off</div></div>""",
+        unsafe_allow_html=True)
+
+    st.write("")
+
+    # Absent list
+    if absent_today:
+        left, right = st.columns(2)
+        absent_sorted = sorted(absent_today)
+        with left:
+            st.markdown("#### 🔴 Absent Today")
+            rows_html = ""
+            for i, name in enumerate(absent_sorted, 1):
+                rows_html += (
+                    f'<div style="display:flex;align-items:center;padding:7px 12px;'
+                    f'margin-bottom:5px;background:#fff5f5;border-radius:8px;'
+                    f'border-left:4px solid #e53e3e;">'
+                    f'<span style="color:#e53e3e;font-weight:700;'
+                    f'width:24px;font-size:13px;">{i}.</span>'
+                    f'<span style="color:#c53030;font-weight:600;font-size:13px;">'
+                    f'🔴 {name}</span></div>'
+                )
+            st.markdown(rows_html, unsafe_allow_html=True)
+
+        with right:
+            if present_today:
+                st.markdown("#### ✅ Present Today")
+                rows_html = ""
+                for i, name in enumerate(sorted(present_today), 1):
+                    tag = " 🌓" if name in halfday_today else ""
+                    rows_html += (
+                        f'<div style="display:flex;align-items:center;padding:7px 12px;'
+                        f'margin-bottom:5px;background:#f0fff4;border-radius:8px;'
+                        f'border-left:4px solid #38a169;">'
+                        f'<span style="color:#38a169;font-weight:700;'
+                        f'width:24px;font-size:13px;">{i}.</span>'
+                        f'<span style="color:#276749;font-weight:600;font-size:13px;">'
+                        f'✅ {name}{tag}</span></div>'
+                    )
+                st.markdown(rows_html, unsafe_allow_html=True)
+    else:
+        st.success("🎉 All employees are present today!")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     today = date.today()
@@ -1490,6 +1594,12 @@ def main():
     # ── KPI bar ───────────────────────────────────────────────────────────────
     render_kpis(df, summary)
     st.divider()
+
+    # ── Today's Attendance snapshot ───────────────────────────────────────────
+    today_d = date.today()
+    if data_year == today_d.year and data_month == today_d.month:
+        render_today_snapshot(df, today_d)
+        st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
