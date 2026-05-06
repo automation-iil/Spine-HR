@@ -582,9 +582,11 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     half_col = grp["Half Day"] if "Half Day" in grp.columns else 0
     wop_col  = grp["Week Off (Worked)"] if "Week Off (Worked)" in grp.columns else 0
 
+    # company_open_days already EXCLUDES Sundays/Week-Offs (filtered by
+    # non_off_statuses). So Working_Days_Net = company_open_days — no further
+    # subtraction needed (subtracting wo_days here would double-count).
     grp["Total_Days"]        = company_open_days
-    grp["Working_Days_Net"]  = (company_open_days - wo_days).clip(lower=1)
-    # Present + 0.5 × Half Day (half days count as half attendance)
+    grp["Working_Days_Net"]  = max(company_open_days, 1)
     grp["Effective_Present"] = (grp["Present"] + half_col * 0.5).round(1)
     grp["Attendance_Pct"]    = (
         grp["Effective_Present"] * 100 / grp["Working_Days_Net"]
