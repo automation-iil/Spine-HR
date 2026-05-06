@@ -1582,18 +1582,8 @@ def main():
 
     summary = build_summary(df)
 
-    # ── KPI bar ───────────────────────────────────────────────────────────────
-    render_kpis(df, summary)
-    st.divider()
-
-    # ── Today's Attendance snapshot (collapsible) ─────────────────────────────
+    # ── Tabs (top navigation) ─────────────────────────────────────────────────
     today_d = date.today()
-    if data_year == today_d.year and data_month == today_d.month:
-        with st.expander(f"📅 Today's Attendance — {today_d.strftime('%A, %d %B %Y')}", expanded=True):
-            render_today_snapshot(df, today_d)
-        st.divider()
-
-    # ── Tabs ──────────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 Monthly Summary",
         "📈 Charts",
@@ -1603,6 +1593,16 @@ def main():
     ])
 
     with tab1:
+        # KPI bar
+        render_kpis(df, summary)
+        st.divider()
+
+        # Today's Attendance (only when current month is selected)
+        if data_year == today_d.year and data_month == today_d.month:
+            with st.expander(f"📅 Today's Attendance — {today_d.strftime('%A, %d %B %Y')}", expanded=True):
+                render_today_snapshot(df, today_d)
+            st.divider()
+
         render_summary_table(summary)
         with st.expander("Raw Records"):
             st.dataframe(
