@@ -1346,9 +1346,6 @@ def render_today_snapshot(df: pd.DataFrame, today_d):
     n_half   = len(halfday_today)
     n_wo     = len(wo_today)
 
-    st.markdown("### 📅 Today's Attendance")
-    st.caption(f"{today_d.strftime('%A, %d %B %Y')}")
-
     # KPI row
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(f"""<div style="background:#f0fff4;border-radius:12px;padding:14px;
@@ -1604,10 +1601,11 @@ def main():
     render_kpis(df, summary)
     st.divider()
 
-    # ── Today's Attendance snapshot ───────────────────────────────────────────
+    # ── Today's Attendance snapshot (collapsible) ─────────────────────────────
     today_d = date.today()
     if data_year == today_d.year and data_month == today_d.month:
-        render_today_snapshot(df, today_d)
+        with st.expander(f"📅 Today's Attendance — {today_d.strftime('%A, %d %B %Y')}", expanded=True):
+            render_today_snapshot(df, today_d)
         st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
