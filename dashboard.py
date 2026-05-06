@@ -564,17 +564,35 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     # Working days = total days - week offs (this is what attendance % should be based on)
     wo_days  = grp["Week Off"] if "Week Off" in grp.columns else 0
     wop_days = grp["Week Off (Worked)"] if "Week Off (Worked)" in grp.columns else 0
-    # ── Working days: days company was OPEN (exclude Sundays/holidays).
-    # For the CURRENT month, cap the count at today (not future dates).
-    non_off_statuses = {"Present", "Absent", "Half Day", "Leave", "Casual Leave",
-                        "Earned Leave", "Medical Leave", "Sick Leave", "On Duty"}
-    if "Date" in df.columns and "Status_Label" in df.columns:
-        open_dates = df.loc[df["Status_Label"].isin(non_off_statuses), "Date"].dropna()
-        # Cap at today if data spans current month or future
+    # ── Working days: calendar-based (Mon–Sat, excluding Sundays).
+    # March 2026: 31 days − 5 Sundays = 26 (− 1 holiday Holi = 25)
+    # April 2026: 30 days − 4 Sundays = 26
+    # For CURRENT month, cap at today.
+    if "Date" in df.columns and not df["Date"].dropna().empty:
+        all_dates = df["Date"].dropna()
+        first_d = all_dates.min()
+        last_d  = all_dates.max()
+        # Cap at today for current month (no future dates)
         today_ts = pd.Timestamp(date.today())
-        if not open_dates.empty and open_dates.max() >= today_ts:
-            open_dates = open_dates[open_dates <= today_ts]
-        company_open_days = open_dates.nunique() if not open_dates.empty else total_days
+        if last_d >= today_ts:
+            last_d = today_ts
+        # Build full date range, exclude Sundays
+        date_range = pd.date_range(first_d, last_d, freq="D")
+        non_sundays = date_range[date_range.dayofweek != 6]   # 6 = Sunday
+        # Subtract any dates marked as Holiday for everyone
+        if "Status_Label" in df.columns:
+            holiday_dates = set(
+                df.loc[df["Status_Label"] == "Holiday", "Date"].dropna().unique()
+            )
+            # Only subtract holidays where NO regular work happened on that date
+            regular = {"Present", "Absent", "Half Day", "Leave", "Casual Leave",
+                       "Earned Leave", "Medical Leave", "Sick Leave", "On Duty"}
+            worked_dates = set(
+                df.loc[df["Status_Label"].isin(regular), "Date"].dropna().unique()
+            )
+            real_holidays = holiday_dates - worked_dates
+            non_sundays = [d for d in non_sundays if d not in real_holidays]
+        company_open_days = len(non_sundays)
     else:
         company_open_days = total_days
     company_open_days = max(company_open_days, 1)
