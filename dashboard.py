@@ -479,7 +479,6 @@ def prepare_df(records: list) -> pd.DataFrame:
             "Present", "Absent", "Half Day", "Leave", "Casual Leave",
             "Earned Leave", "Medical Leave", "Sick Leave", "On Duty",
         }
-        # Don't include future dates in working-day calculation
         today_ts = pd.Timestamp(date.today())
         company_working_dates = set(
             df.loc[
@@ -488,17 +487,23 @@ def prepare_df(records: list) -> pd.DataFrame:
             ].dropna().unique()
         )
         if company_working_dates:
+            # Cut-off for fill range:
+            #   - current month → today
+            #   - past month    → max date in this month's data
+            month_max = df["Date"].max()
+            global_end = today_ts if month_max >= today_ts else month_max
             dept_map_fill = load_departments()
             missing_rows = []
             for emp_code, grp in df.groupby("Emp Code"):
                 emp_name = grp["Emp Name"].iloc[0] if "Emp Name" in grp.columns else ""
-                # Prefer dept already on the record; fall back to map
                 dept_vals = grp["Department"].replace("Unassigned", "").replace("", pd.NA).dropna()
                 dept = dept_vals.iloc[0] if not dept_vals.empty else \
                        dept_map_fill.get(str(emp_code), "Unassigned")
-                emp_dates = set(grp["Date"].dropna())
+                emp_dates  = set(grp["Date"].dropna())
                 first_date = grp["Date"].min()
-                last_date  = grp["Date"].max()
+                # Extend each employee's range up to today (or month max for past months)
+                # so that "absent today" rows are generated for those who didn't punch in.
+                last_date  = global_end
                 for d in company_working_dates:
                     if first_date <= d <= last_date and d not in emp_dates:
                         missing_rows.append({
