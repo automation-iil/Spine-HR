@@ -1324,65 +1324,51 @@ def render_today_snapshot(df: pd.DataFrame, today_d):
     # All employees in the dataset
     all_emps = set(df["Emp Name"].dropna().unique())
 
-    # Present today (any non-absent status)
-    if not today_df.empty and "Status_Label" in today_df.columns:
-        present_statuses = {"Present", "Half Day", "Week Off (Worked)", "On Duty"}
-        present_today  = set(today_df[today_df["Status_Label"].isin(present_statuses)]["Emp Name"].dropna())
-        halfday_today  = set(today_df[today_df["Status_Label"] == "Half Day"]["Emp Name"].dropna())
-        wo_today       = set(today_df[today_df["Status_Label"].isin({"Week Off","Holiday"})]["Emp Name"].dropna())
-        absent_today   = set(today_df[today_df["Status_Label"] == "Absent"]["Emp Name"].dropna())
-        # Also count employees with no record today as absent
-        no_record_today = all_emps - set(today_df["Emp Name"].dropna())
-        absent_today   = absent_today | no_record_today
-    else:
-        present_today  = set()
-        halfday_today  = set()
-        wo_today       = set()
-        absent_today   = all_emps   # no data yet today = everyone unknown
+    # Anyone with a real InTime today = Present (no half-day / week-off split)
+    present_today = set()
+    if not today_df.empty and "InTime" in today_df.columns:
+        for _, r in today_df.iterrows():
+            in_min = _time_to_minutes(r.get("InTime", ""))
+            if in_min is not None and in_min > 0:
+                nm = r.get("Emp Name")
+                if nm:
+                    present_today.add(nm)
+    # Everyone else = Absent
+    absent_today = all_emps - present_today
 
-    total    = len(all_emps)
-    n_pres   = len(present_today)
-    n_abs    = len(absent_today)
-    n_half   = len(halfday_today)
-    n_wo     = len(wo_today)
+    n_pres = len(present_today)
+    n_abs  = len(absent_today)
+    total  = len(all_emps)
 
-    # KPI row
-    c1, c2, c3, c4 = st.columns(4)
+    # KPI row — only Present + Absent + Total
+    c1, c2, c3 = st.columns(3)
     c1.markdown(f"""<div style="background:#f0fff4;border-radius:12px;padding:14px;
         text-align:center;border-top:4px solid #38a169;">
-        <div style="font-size:28px;font-weight:800;color:#276749;">
+        <div style="font-size:32px;font-weight:800;color:#276749;">
         {n_pres}</div><div style="font-size:11px;font-weight:600;
         color:#38a169;text-transform:uppercase;">Present</div></div>""",
         unsafe_allow_html=True)
     c2.markdown(f"""<div style="background:#fff5f5;border-radius:12px;padding:14px;
         text-align:center;border-top:4px solid #e53e3e;">
-        <div style="font-size:28px;font-weight:800;color:#c53030;">
+        <div style="font-size:32px;font-weight:800;color:#c53030;">
         {n_abs}</div><div style="font-size:11px;font-weight:600;
         color:#e53e3e;text-transform:uppercase;">Absent</div></div>""",
         unsafe_allow_html=True)
-    c3.markdown(f"""<div style="background:#ebf8ff;border-radius:12px;padding:14px;
-        text-align:center;border-top:4px solid #3182ce;">
-        <div style="font-size:28px;font-weight:800;color:#2b6cb0;">
-        {n_half}</div><div style="font-size:11px;font-weight:600;
-        color:#3182ce;text-transform:uppercase;">Half Day</div></div>""",
-        unsafe_allow_html=True)
-    c4.markdown(f"""<div style="background:#f7fafc;border-radius:12px;padding:14px;
-        text-align:center;border-top:4px solid #a0aec0;">
-        <div style="font-size:28px;font-weight:800;color:#718096;">
-        {n_wo}</div><div style="font-size:11px;font-weight:600;
-        color:#a0aec0;text-transform:uppercase;">Week Off</div></div>""",
+    c3.markdown(f"""<div style="background:#f0f4ff;border-radius:12px;padding:14px;
+        text-align:center;border-top:4px solid #0f3460;">
+        <div style="font-size:32px;font-weight:800;color:#1a1a2e;">
+        {total}</div><div style="font-size:11px;font-weight:600;
+        color:#0f3460;text-transform:uppercase;">Total Employees</div></div>""",
         unsafe_allow_html=True)
 
     st.write("")
 
-    # Absent list
     if absent_today:
         left, right = st.columns(2)
-        absent_sorted = sorted(absent_today)
         with left:
-            st.markdown("#### 🔴 Absent Today")
+            st.markdown(f"#### 🔴 Absent Today ({n_abs})")
             rows_html = ""
-            for i, name in enumerate(absent_sorted, 1):
+            for i, name in enumerate(sorted(absent_today), 1):
                 rows_html += (
                     f'<div style="display:flex;align-items:center;padding:7px 12px;'
                     f'margin-bottom:5px;background:#fff5f5;border-radius:8px;'
@@ -1396,10 +1382,9 @@ def render_today_snapshot(df: pd.DataFrame, today_d):
 
         with right:
             if present_today:
-                st.markdown("#### ✅ Present Today")
+                st.markdown(f"#### ✅ Present Today ({n_pres})")
                 rows_html = ""
                 for i, name in enumerate(sorted(present_today), 1):
-                    tag = " 🌓" if name in halfday_today else ""
                     rows_html += (
                         f'<div style="display:flex;align-items:center;padding:7px 12px;'
                         f'margin-bottom:5px;background:#f0fff4;border-radius:8px;'
@@ -1407,7 +1392,7 @@ def render_today_snapshot(df: pd.DataFrame, today_d):
                         f'<span style="color:#38a169;font-weight:700;'
                         f'width:24px;font-size:13px;">{i}.</span>'
                         f'<span style="color:#276749;font-weight:600;font-size:13px;">'
-                        f'✅ {name}{tag}</span></div>'
+                        f'✅ {name}</span></div>'
                     )
                 st.markdown(rows_html, unsafe_allow_html=True)
     else:
